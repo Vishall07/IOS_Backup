@@ -363,23 +363,36 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public async Task StartBackupAsync()
     {
+        if (SelectedDevice == null)
+        {
+            MessageBox.Show("Please select an iPhone device or Demo Mode first.", "No Device", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        // If not scanned yet, automatically scan iPhone first!
         if (_rootDiffNode == null)
         {
-            MessageBox.Show("Please scan the iPhone first.", "No Files Scanned", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
+            Log("No media scanned yet. Automatically scanning iPhone before backup...");
+            await ScanAsync();
+
+            if (_rootDiffNode == null)
+            {
+                // Scan did not produce files (e.g. cancelled or device locked)
+                return;
+            }
         }
 
         var filesToTransfer = _rootDiffNode.GetSelectedFiles().ToList();
         if (filesToTransfer.Count == 0)
         {
-            MessageBox.Show("No files are selected for backup. Please check at least one file.", "Nothing Selected", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
-
-        if (SelectedDevice == null)
-        {
-            MessageBox.Show("Selected device is no longer connected.", "Device Disconnected", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
+            // If no files checked, automatically check all pending backup files
+            SelectAllPending();
+            filesToTransfer = _rootDiffNode.GetSelectedFiles().ToList();
+            if (filesToTransfer.Count == 0)
+            {
+                MessageBox.Show("All media files are already backed up! There are no pending files to transfer.", "Backup Complete", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
         }
 
         IsTransferring = true;

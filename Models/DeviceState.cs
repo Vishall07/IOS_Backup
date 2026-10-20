@@ -40,6 +40,10 @@ public class MediaItemNode
     [JsonPropertyName("RelativePath")]
     public string RelativePath { get; set; } = string.Empty;
 
+    [JsonPropertyName("SourcePath")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? SourcePath { get; set; }
+
     [JsonPropertyName("Children")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public List<MediaItemNode>? Children { get; set; }

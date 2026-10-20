@@ -189,29 +189,38 @@ public class DeviceService : IDeviceService
                     }
                 };
 
-                progress?.Report("Searching for DCIM folder on iPhone...");
+                progress?.Report("Discovering photo folders on iPhone...");
 
-                // Locate DCIM folder path on MTP device
-                string? dcimPath = FindDcimPath(device);
-                if (string.IsNullOrEmpty(dcimPath))
-                {
-                    // Fallback to checking root directly
-                    dcimPath = @"\Internal Storage\DCIM";
-                    if (!device.DirectoryExists(dcimPath))
-                    {
-                        dcimPath = @"\DCIM";
-                    }
-                }
+                // Find candidate photo folder roots (either DCIM subfolders or direct month folders)
+                var folderRoots = FindMediaFolderRoots(device);
 
-                if (!device.DirectoryExists(dcimPath))
+                if (folderRoots.Count == 0)
                 {
                     throw new DirectoryNotFoundException(
-                        "DCIM folder not found on iPhone. Please ensure the iPhone is unlocked and you have tapped 'Trust This Computer'.");
+                        "No photos or media folders could be accessed on the iPhone. Please ensure your iPhone is UNLOCKED with your passcode and you have tapped 'Trust This Computer' on the iPhone screen.");
                 }
 
-                progress?.Report($"Scanning DCIM folder: {dcimPath}...");
-                ScanMtpDirectoryRecursive(device, dcimPath, state.Root, "DCIM", progress, ct);
+                progress?.Report($"Scanning {folderRoots.Count} media folder(s) on iPhone...");
+                foreach (var (mtpPath, folderName) in folderRoots)
+                {
+                    ct.ThrowIfCancellationRequested();
 
+                    var folderNode = new MediaItemNode
+                    {
+                        Name = folderName,
+                        IsDirectory = true,
+                        RelativePath = $"DCIM/{folderName}",
+                        Children = new List<MediaItemNode>()
+                    };
+
+                    state.Root.Children ??= new List<MediaItemNode>();
+                    state.Root.Children.Add(folderNode);
+
+                    progress?.Report($"Scanning folder: {folderName}...");
+                    ScanMtpDirectoryRecursive(device, mtpPath, folderNode, $"DCIM/{folderName}", progress, ct);
+                }
+
+                state.Root.Size = state.Root.Children?.Sum(c => c.Size) ?? 0;
                 return state;
             }
             finally
@@ -224,48 +233,104 @@ public class DeviceService : IDeviceService
         }, ct);
     }
 
-    private string? FindDcimPath(MediaDevice device)
+    private List<(string MtpPath, string FolderName)> FindMediaFolderRoots(MediaDevice device)
     {
+        var result = new List<(string MtpPath, string FolderName)>();
         try
         {
-            var drives = device.GetDrives();
+            var drives = device.GetDrives() ?? Enumerable.Empty<MediaDriveInfo>();
             foreach (var drive in drives)
             {
+                if (drive.RootDirectory == null) continue;
+                string rootPath = drive.RootDirectory.FullName;
+
+                // 1. Get subdirectories of drive root
+                string[] rootSubDirs;
                 try
                 {
-                    if (drive.RootDirectory == null) continue;
-                    var rootPath = drive.RootDirectory.FullName;
-                    var subDirs = device.GetDirectories(rootPath);
-                    foreach (var dir in subDirs)
-                    {
-                        var name = Path.GetFileName(dir.TrimEnd('\\', '/'));
-                        if (string.Equals(name, "DCIM", StringComparison.OrdinalIgnoreCase))
-                        {
-                            return dir;
-                        }
+                    rootSubDirs = device.GetDirectories(rootPath);
+                }
+                catch
+                {
+                    rootSubDirs = Array.Empty<string>();
+                }
 
-                        // Also check one level deeper: "Internal Storage\DCIM"
+                // Check for DCIM folder directly under drive root
+                string? dcimPath = rootSubDirs.FirstOrDefault(d => 
+                    string.Equals(Path.GetFileName(d.TrimEnd('\\', '/')), "DCIM", StringComparison.OrdinalIgnoreCase));
+
+                // Check for DCIM folder one level deeper (e.g. \Internal Storage\DCIM)
+                if (dcimPath == null)
+                {
+                    foreach (var dir in rootSubDirs)
+                    {
                         try
                         {
-                            var innerDirs = device.GetDirectories(dir);
-                            foreach (var inner in innerDirs)
+                            var inner = device.GetDirectories(dir);
+                            var innerDcim = inner.FirstOrDefault(d => 
+                                string.Equals(Path.GetFileName(d.TrimEnd('\\', '/')), "DCIM", StringComparison.OrdinalIgnoreCase));
+                            if (innerDcim != null)
                             {
-                                var innerName = Path.GetFileName(inner.TrimEnd('\\', '/'));
-                                if (string.Equals(innerName, "DCIM", StringComparison.OrdinalIgnoreCase))
-                                {
-                                    return inner;
-                                }
+                                dcimPath = innerDcim;
+                                break;
                             }
                         }
                         catch { }
                     }
                 }
-                catch { }
+
+                // If DCIM folder exists: return its subfolders (e.g. 100APPLE, 101APPLE)
+                if (dcimPath != null)
+                {
+                    try
+                    {
+                        var dcimSub = device.GetDirectories(dcimPath);
+                        foreach (var sub in dcimSub)
+                        {
+                            string folderName = Path.GetFileName(sub.TrimEnd('\\', '/'));
+                            result.Add((sub, folderName));
+                        }
+                    }
+                    catch { }
+
+                    if (result.Count > 0) return result;
+                }
+
+                // If NO DCIM folder exists:
+                // Check if \Internal Storage contains media/month folders (e.g. 202409__, 202610__, etc.)
+                foreach (var dir in rootSubDirs)
+                {
+                    try
+                    {
+                        var inner = device.GetDirectories(dir);
+                        if (inner.Length > 0)
+                        {
+                            foreach (var innerDir in inner)
+                            {
+                                string innerName = Path.GetFileName(innerDir.TrimEnd('\\', '/'));
+                                result.Add((innerDir, innerName));
+                            }
+                            if (result.Count > 0) return result;
+                        }
+                    }
+                    catch { }
+                }
+
+                // Fallback: use rootSubDirs directly
+                if (rootSubDirs.Length > 0)
+                {
+                    foreach (var dir in rootSubDirs)
+                    {
+                        string folderName = Path.GetFileName(dir.TrimEnd('\\', '/'));
+                        result.Add((dir, folderName));
+                    }
+                    if (result.Count > 0) return result;
+                }
             }
         }
         catch { }
 
-        return null;
+        return result;
     }
 
     private void ScanMtpDirectoryRecursive(
@@ -342,7 +407,8 @@ public class DeviceService : IDeviceService
                 Name = fileName,
                 IsDirectory = false,
                 Size = fileSize,
-                RelativePath = $"{currentRelativePath}/{fileName}"
+                RelativePath = $"{currentRelativePath}/{fileName}",
+                SourcePath = filePath
             };
 
             parentNode.Children ??= new List<MediaItemNode>();

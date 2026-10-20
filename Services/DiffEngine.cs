@@ -79,7 +79,7 @@ public class DiffEngine : IDiffEngine
             Name = node.Name,
             IsDirectory = node.IsDirectory,
             RelativePath = node.RelativePath,
-            FullPathSource = node.RelativePath,
+            FullPathSource = !string.IsNullOrEmpty(node.SourcePath) ? node.SourcePath : node.RelativePath,
             FullPathDest = destPath,
             Parent = parent,
             Size = node.Size,
