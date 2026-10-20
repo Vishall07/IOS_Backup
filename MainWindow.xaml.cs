@@ -20,6 +20,28 @@ public partial class MainWindow : Window
         ViewModel = new MainViewModel(deviceService, localStorageService, diffEngine, transferEngine);
         DataContext = ViewModel;
 
+        ViewModel.ProcessLogs.CollectionChanged += (s, e) =>
+        {
+            if (e.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Add && ViewModel.ProcessLogs.Count > 0)
+            {
+                Dispatcher.InvokeAsync(() =>
+                {
+                    try
+                    {
+                        if (ModalLogListBox?.Items.Count > 0)
+                        {
+                            ModalLogListBox.ScrollIntoView(ModalLogListBox.Items[^1]);
+                        }
+                        if (SidebarLogListBox?.Items.Count > 0)
+                        {
+                            SidebarLogListBox.ScrollIntoView(SidebarLogListBox.Items[^1]);
+                        }
+                    }
+                    catch { }
+                });
+            }
+        };
+
         Loaded += async (s, e) =>
         {
             await ViewModel.InitializeAsync();

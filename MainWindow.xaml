@@ -266,7 +266,9 @@
         </HierarchicalDataTemplate>
     </Window.Resources>
 
-    <Grid Margin="20">
+    <Grid>
+        <!-- Main Application Layout -->
+        <Grid Margin="20">
         <Grid.RowDefinitions>
             <!-- Header & Device Status Banner -->
             <RowDefinition Height="Auto" />
@@ -301,7 +303,7 @@
                 </StackPanel>
             </StackPanel>
 
-            <!-- Device Connection Pill -->
+            <!-- Device Connection Pill & Process Monitor Button -->
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                 <Border Background="#1E293B" BorderBrush="#334155" BorderThickness="1" CornerRadius="20" Padding="12,6">
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
@@ -310,6 +312,13 @@
                                    Foreground="#F8FAFC" FontSize="12" FontWeight="SemiBold" />
                     </StackPanel>
                 </Border>
+
+                <Button Command="{Binding OpenProcessModalCommand}" Style="{StaticResource ModernButton}" 
+                        Padding="12,6" Margin="10,0,0,0">
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock Text="📊 View Process Modal / Logs" FontWeight="SemiBold" FontSize="12" Foreground="{StaticResource AccentBlue}" />
+                    </StackPanel>
+                </Button>
             </StackPanel>
         </Grid>
 
@@ -669,21 +678,51 @@
                     </Grid.RowDefinitions>
 
                     <Grid Grid.Row="0" Margin="0,0,0,8">
-                        <TextBlock Text="📜 Activity Log" FontWeight="SemiBold" FontSize="14" Foreground="#F8FAFC" />
-                        <Button HorizontalAlignment="Right" Command="{Binding OpenStateJsonFolderCommand}" 
-                                Style="{StaticResource ModernButton}" Content="View JSONs" Padding="8,2" FontSize="11" />
+                        <TextBlock Text="📜 Internal Process Log" FontWeight="SemiBold" FontSize="13" Foreground="#F8FAFC" VerticalAlignment="Center" />
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <Button Command="{Binding OpenProcessModalCommand}" 
+                                    Style="{StaticResource ModernButton}" Content="🔍 Modal" Padding="6,2" FontSize="10" Margin="0,0,4,0" ToolTip="Open full process modal" />
+                            <Button Command="{Binding CopyLogsCommand}" 
+                                    Style="{StaticResource ModernButton}" Content="📋" Padding="5,2" FontSize="10" Margin="0,0,4,0" ToolTip="Copy logs to clipboard" />
+                            <Button Command="{Binding ClearLogsCommand}" 
+                                    Style="{StaticResource ModernButton}" Content="🧹" Padding="5,2" FontSize="10" Margin="0,0,4,0" ToolTip="Clear logs" />
+                            <Button Command="{Binding OpenStateJsonFolderCommand}" 
+                                    Style="{StaticResource ModernButton}" Content="JSON" Padding="6,2" FontSize="10" ToolTip="Open state JSON folder" />
+                        </StackPanel>
                     </Grid>
 
                     <!-- Activity Log List -->
-                    <Border Grid.Row="1" Background="#0F172A" BorderBrush="#334155" BorderThickness="1" CornerRadius="6">
-                        <ListBox ItemsSource="{Binding ActivityLogs}" Background="Transparent" BorderThickness="0"
+                    <Border Grid.Row="1" Background="#0A0E17" BorderBrush="#334155" BorderThickness="1" CornerRadius="6">
+                        <ListBox x:Name="SidebarLogListBox" ItemsSource="{Binding ProcessLogs}" Background="Transparent" BorderThickness="0"
                                  ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                                 Foreground="{StaticResource TextSecondary}" FontSize="11" FontFamily="Consolas, monospace">
-                            <ListBox.ItemContainerStyle>
-                                <Style TargetType="ListBoxItem">
-                                    <Setter Property="Padding" Value="4,2" />
-                                </Style>
-                            </ListBox.ItemContainerStyle>
+                                 ScrollViewer.VerticalScrollBarVisibility="Auto">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate DataType="{x:Type models:LogEntry}">
+                                    <Grid Margin="0,1">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+
+                                        <!-- Timestamp -->
+                                        <TextBlock Grid.Column="0" Text="{Binding TimestampFormatted}" 
+                                                   Foreground="#64748B" FontSize="10" FontFamily="Consolas, monospace" Margin="0,0,4,0" />
+
+                                        <!-- Level Badge -->
+                                        <Border Grid.Column="1" Background="#0F172A" BorderBrush="{Binding LevelBrush}" BorderThickness="1" 
+                                                CornerRadius="3" Padding="3,0" Margin="0,0,5,0" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding LevelBadge}" Foreground="{Binding LevelBrush}" 
+                                                       FontSize="8" FontWeight="Bold" FontFamily="Consolas, monospace" />
+                                        </Border>
+
+                                        <!-- Message -->
+                                        <TextBlock Grid.Column="2" Text="{Binding Message}" 
+                                                   Foreground="#E2E8F0" FontSize="10" FontFamily="Consolas, monospace" 
+                                                   TextWrapping="Wrap" VerticalAlignment="Center" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
                         </ListBox>
                     </Border>
 
@@ -827,5 +866,165 @@
                            Foreground="{StaticResource AccentBlue}" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center" Margin="16,0,0,0" />
             </Grid>
         </Border>
+        </Grid> <!-- End Main Application Layout Grid -->
+
+        <!-- 7. Interactive Live Process Modal Overlay -->
+        <Grid Visibility="{Binding IsProcessModalOpen, Converter={StaticResource BoolToVisConverter}}" 
+              Background="#D9090D16">
+            <Border Width="880" Height="640" CornerRadius="14" 
+                    Background="#1E293B" BorderBrush="#475569" BorderThickness="1.5"
+                    Padding="24" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <!-- Modal Header -->
+                        <RowDefinition Height="Auto" />
+                        <!-- Active Process Summary Card -->
+                        <RowDefinition Height="Auto" />
+                        <!-- Real-time Terminal Log Console -->
+                        <RowDefinition Height="*" />
+                        <!-- Modal Footer Action Buttons -->
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <!-- Modal Header -->
+                    <Grid Grid.Row="0" Margin="0,0,0,16">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0">
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <Border Background="#2563EB" CornerRadius="8" Width="36" Height="36" Margin="0,0,12,0">
+                                    <TextBlock Text="⚙️" FontSize="18" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Border>
+                                <StackPanel>
+                                    <TextBlock Text="{Binding ModalTitle}" FontSize="18" FontWeight="Bold" Foreground="#F8FAFC" />
+                                    <TextBlock Text="{Binding ModalSubtitle}" FontSize="12" Foreground="{StaticResource TextSecondary}" TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                            </StackPanel>
+                        </StackPanel>
+
+                        <Button Grid.Column="1" Command="{Binding CloseProcessModalCommand}" 
+                                Style="{StaticResource ModernButton}" Content="✕ Minimize" Padding="14,6" FontSize="12" />
+                    </Grid>
+
+                    <!-- Active Operation Status Card -->
+                    <Border Grid.Row="1" Background="#0F172A" BorderBrush="#334155" BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,14">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <Grid Grid.Row="0" Margin="0,0,0,6">
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Ellipse Width="10" Height="10" Fill="{StaticResource AccentBlue}" Margin="0,0,8,0" />
+                                    <TextBlock Text="{Binding StatusMessage}" FontSize="12" FontWeight="SemiBold" Foreground="#F8FAFC" />
+                                </StackPanel>
+
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                    <TextBlock Text="{Binding ProgressInfo.BytesPerSecond, Converter={StaticResource SpeedConverter}, StringFormat='Speed: {0}'}" 
+                                               Foreground="{StaticResource AccentBlue}" FontWeight="Bold" FontSize="12" Margin="0,0,14,0" />
+                                    <TextBlock Text="{Binding ProgressInfo.EstimatedTimeRemaining, Converter={StaticResource TimeRemainingConverter}, StringFormat='ETA: {0}'}" 
+                                               Foreground="{StaticResource AccentGreen}" FontWeight="Bold" FontSize="12" />
+                                </StackPanel>
+                            </Grid>
+
+                            <!-- Overall Progress Bar -->
+                            <ProgressBar Grid.Row="1" Style="{StaticResource ModernProgressBar}" 
+                                         Value="{Binding ProgressInfo.OverallPercentage, Mode=OneWay}" 
+                                         Height="8" Foreground="{StaticResource AccentBlue}" />
+                        </Grid>
+                    </Border>
+
+                    <!-- Real-Time Terminal Log Stream -->
+                    <Border Grid.Row="2" Background="#0A0E17" BorderBrush="#334155" BorderThickness="1" CornerRadius="8" Margin="0,0,0,16">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+
+                            <!-- Terminal Bar -->
+                            <Border Grid.Row="0" Background="#161F30" BorderBrush="#253248" BorderThickness="0,0,0,1" Padding="12,6" CornerRadius="8,8,0,0">
+                                <Grid>
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <Ellipse Width="8" Height="8" Fill="#EF4444" Margin="0,0,6,0" />
+                                        <Ellipse Width="8" Height="8" Fill="#F59E0B" Margin="0,0,6,0" />
+                                        <Ellipse Width="8" Height="8" Fill="#10B981" Margin="0,0,10,0" />
+                                        <TextBlock Text="LIVE INTERNAL PROCESS STREAM" FontSize="11" FontWeight="Bold" Foreground="#94A3B8" FontFamily="Consolas, monospace" />
+                                    </StackPanel>
+                                    <TextBlock HorizontalAlignment="Right" Text="{Binding ProcessLogs.Count, StringFormat='{}{0} log entries'}" 
+                                               FontSize="11" Foreground="#64748B" FontFamily="Consolas, monospace" />
+                                </Grid>
+                            </Border>
+
+                            <!-- Terminal Log ListBox -->
+                            <ListBox x:Name="ModalLogListBox" Grid.Row="1" ItemsSource="{Binding ProcessLogs}" 
+                                     Background="Transparent" BorderThickness="0"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                     ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate DataType="{x:Type models:LogEntry}">
+                                        <Grid Margin="0,2">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+
+                                            <!-- Timestamp -->
+                                            <TextBlock Grid.Column="0" Text="{Binding TimestampFormatted}" 
+                                                       Foreground="#64748B" FontSize="11" FontFamily="Consolas, monospace" Margin="0,0,8,0" />
+
+                                            <!-- Badge -->
+                                            <Border Grid.Column="1" Background="#1E293B" BorderBrush="{Binding LevelBrush}" BorderThickness="1" 
+                                                    CornerRadius="4" Padding="5,1" Margin="0,0,8,0" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding LevelBadge}" Foreground="{Binding LevelBrush}" 
+                                                           FontSize="9" FontWeight="Bold" FontFamily="Consolas, monospace" />
+                                            </Border>
+
+                                            <!-- Message Text -->
+                                            <TextBlock Grid.Column="2" Text="{Binding Message}" 
+                                                       Foreground="#F1F5F9" FontSize="11" FontFamily="Consolas, monospace" 
+                                                       TextWrapping="Wrap" VerticalAlignment="Center" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </Grid>
+                    </Border>
+
+                    <!-- Modal Action Buttons -->
+                    <Grid Grid.Row="3">
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                            <Button Command="{Binding CopyLogsCommand}" Style="{StaticResource ModernButton}" 
+                                    Content="📋 Copy Logs" Padding="12,6" FontSize="12" Margin="0,0,8,0" />
+                            <Button Command="{Binding ClearLogsCommand}" Style="{StaticResource ModernButton}" 
+                                    Content="🧹 Clear" Padding="12,6" FontSize="12" Margin="0,0,8,0" />
+                            <Button Command="{Binding OpenStateJsonFolderCommand}" Style="{StaticResource ModernButton}" 
+                                    Content="📂 Open State JSONs" Padding="12,6" FontSize="12" />
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <!-- Cancel Scan button if scanning -->
+                            <Button Command="{Binding CancelScanCommand}" Style="{StaticResource DangerButton}" 
+                                    Content="⏹ Cancel Scan" Padding="14,6" FontSize="12" Margin="0,0,10,0"
+                                    Visibility="{Binding IsScanning, Converter={StaticResource BoolToVisConverter}}" />
+
+                            <!-- Cancel Backup button if transferring -->
+                            <Button Command="{Binding CancelBackupCommand}" Style="{StaticResource DangerButton}" 
+                                    Content="⏹ Cancel Backup" Padding="14,6" FontSize="12" Margin="0,0,10,0"
+                                    Visibility="{Binding IsTransferring, Converter={StaticResource BoolToVisConverter}}" />
+
+                            <!-- Minimize / Close button -->
+                            <Button Command="{Binding CloseProcessModalCommand}" Style="{StaticResource PrimaryButton}" 
+                                    Content="Minimize to Background" Padding="16,6" FontSize="12" />
+                        </StackPanel>
+                    </Grid>
+                </Grid>
+            </Border>
+        </Grid>
     </Grid>
 </Window>

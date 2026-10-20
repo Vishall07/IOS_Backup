@@ -189,7 +189,7 @@ public class DeviceService : IDeviceService
                     }
                 };
 
-                progress?.Report("Discovering photo folders on iPhone...");
+                progress?.Report($"[WPD] Connected to '{device.FriendlyName}'. Discovering media folders...");
 
                 // Find candidate photo folder roots (either DCIM subfolders or direct month folders)
                 var folderRoots = FindMediaFolderRoots(device);
@@ -200,10 +200,11 @@ public class DeviceService : IDeviceService
                         "No photos or media folders could be accessed on the iPhone. Please ensure your iPhone is UNLOCKED with your passcode and you have tapped 'Trust This Computer' on the iPhone screen.");
                 }
 
-                progress?.Report($"Scanning {folderRoots.Count} media folder(s) on iPhone...");
-                foreach (var (mtpPath, folderName) in folderRoots)
+                progress?.Report($"[Scanner] Discovered {folderRoots.Count} folder(s) on iPhone. Beginning analysis...");
+                for (int i = 0; i < folderRoots.Count; i++)
                 {
                     ct.ThrowIfCancellationRequested();
+                    var (mtpPath, folderName) = folderRoots[i];
 
                     var folderNode = new MediaItemNode
                     {
@@ -216,11 +217,14 @@ public class DeviceService : IDeviceService
                     state.Root.Children ??= new List<MediaItemNode>();
                     state.Root.Children.Add(folderNode);
 
-                    progress?.Report($"Scanning folder: {folderName}...");
+                    progress?.Report($"[Scanner] [{i + 1}/{folderRoots.Count}] Scanning folder: '{folderName}'...");
                     ScanMtpDirectoryRecursive(device, mtpPath, folderNode, $"DCIM/{folderName}", progress, ct);
+                    progress?.Report($"[Scanner] [{i + 1}/{folderRoots.Count}] '{folderName}' complete ({folderNode.Children?.Count ?? 0} files, {StorageMetrics.FormatBytes(folderNode.Size)}).");
                 }
 
                 state.Root.Size = state.Root.Children?.Sum(c => c.Size) ?? 0;
+                int totalFiles = state.Root.Children?.Sum(c => c.Children?.Count ?? 0) ?? 0;
+                progress?.Report($"[Scanner] Scan complete: Found {totalFiles} media items ({StorageMetrics.FormatBytes(state.Root.Size)} total).");
                 return state;
             }
             finally

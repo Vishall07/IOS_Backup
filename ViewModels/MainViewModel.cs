@@ -89,6 +89,18 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private ObservableCollection<string> _activityLogs = new();
 
+    [ObservableProperty]
+    private ObservableCollection<LogEntry> _processLogs = new();
+
+    [ObservableProperty]
+    private bool _isProcessModalOpen;
+
+    [ObservableProperty]
+    private string _modalTitle = "Internal Process Monitor";
+
+    [ObservableProperty]
+    private string _modalSubtitle = "Real-time diagnostic trace";
+
     private FileDiffNodeViewModel? _rootDiffNode;
 
     public string SelectedSizeFormatted => StorageMetrics.FormatBytes(SelectedFilesBytes);
@@ -254,12 +266,18 @@ public partial class MainViewModel : ObservableObject
 
         IsScanning = true;
         StatusMessage = "Starting media scan...";
+        ModalTitle = "Scanning iPhone Media";
+        ModalSubtitle = $"Discovering photos and videos on {SelectedDevice.DisplayName}...";
+        IsProcessModalOpen = true;
+
         _scanCts = new CancellationTokenSource();
         var ct = _scanCts.Token;
 
         var scanProgress = new Progress<string>(msg =>
         {
             StatusMessage = msg;
+            ModalSubtitle = msg;
+            Log(msg, LogLevel.Scan, "SCAN");
         });
 
         try
@@ -397,14 +415,19 @@ public partial class MainViewModel : ObservableObject
 
         IsTransferring = true;
         IsPaused = false;
+        ModalTitle = "Backing Up iPhone Media";
+        ModalSubtitle = $"Streaming {filesToTransfer.Count} file(s) to destination...";
+        IsProcessModalOpen = true;
+
         _transferCts = new CancellationTokenSource();
 
-        Log($"Initiating backup of {filesToTransfer.Count} files ({StorageMetrics.FormatBytes(filesToTransfer.Sum(f => f.Size))}) with {Concurrency} concurrent stream(s)...");
+        Log($"Initiating backup of {filesToTransfer.Count} files ({StorageMetrics.FormatBytes(filesToTransfer.Sum(f => f.Size))}) with {Concurrency} concurrent stream(s)...", LogLevel.Transfer, "XFER");
 
         var progress = new Progress<TransferProgressInfo>(info =>
         {
             ProgressInfo = info;
             StatusMessage = info.StatusMessage;
+            ModalSubtitle = $"{info.StatusMessage} ({info.OverallPercentage:F1}%)";
             IsPaused = info.State == TransferState.Paused;
         });
 
@@ -426,11 +449,11 @@ public partial class MainViewModel : ObservableObject
                         {
                             PendingFilesCount = Math.Max(0, PendingFilesCount - 1);
                             BackedUpFilesCount++;
-                            Log($"Backed up: {file.Name} ({file.FormattedSize})");
+                            Log($"Backed up: {file.Name} ({file.FormattedSize})", LogLevel.Success, "XFER");
                         }
                         else
                         {
-                            Log($"Failed to copy {file.Name}: {err}");
+                            Log($"Failed to copy {file.Name}: {err}", LogLevel.Error, "XFER");
                         }
                     };
 
@@ -649,14 +672,62 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
-    private void Log(string message)
+    [RelayCommand]
+    public void OpenProcessModal()
     {
-        string timestamp = DateTime.Now.ToString("HH:mm:ss");
-        string entry = $"[{timestamp}] {message}";
-        ActivityLogs.Insert(0, entry);
-        if (ActivityLogs.Count > 150)
+        IsProcessModalOpen = true;
+    }
+
+    [RelayCommand]
+    public void CloseProcessModal()
+    {
+        IsProcessModalOpen = false;
+    }
+
+    [RelayCommand]
+    public void ClearLogs()
+    {
+        ProcessLogs.Clear();
+        ActivityLogs.Clear();
+        Log("Diagnostic logs cleared.", LogLevel.Info, "SYSTEM");
+    }
+
+    [RelayCommand]
+    public void CopyLogs()
+    {
+        try
         {
-            ActivityLogs.RemoveAt(ActivityLogs.Count - 1);
+            var text = string.Join(Environment.NewLine, ProcessLogs.Select(l => l.FullText));
+            Clipboard.SetText(text);
+            Log("Logs copied to clipboard.", LogLevel.Success, "SYSTEM");
+        }
+        catch { }
+    }
+
+    public void Log(string message, LogLevel level = LogLevel.Info, string category = "SYSTEM")
+    {
+        var entry = new LogEntry
+        {
+            Level = level,
+            Category = category,
+            Message = message
+        };
+
+        void Append()
+        {
+            ProcessLogs.Add(entry);
+            ActivityLogs.Insert(0, entry.ToString());
+            if (ActivityLogs.Count > 300) ActivityLogs.RemoveAt(ActivityLogs.Count - 1);
+            if (ProcessLogs.Count > 1500) ProcessLogs.RemoveAt(0);
+        }
+
+        if (Application.Current?.Dispatcher != null && !Application.Current.Dispatcher.CheckAccess())
+        {
+            Application.Current.Dispatcher.InvokeAsync(Append);
+        }
+        else
+        {
+            Append();
         }
     }
 }
