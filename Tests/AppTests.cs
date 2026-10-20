@@ -440,4 +440,223 @@ public class AppTests
             }
         }
     }
+
+    [Fact]
+    public void HeicDecoding_WithMagickNet_LoadsAndResizesCorrectly()
+    {
+        string sampleHeic = @"C:\Users\Admin\Pictures\iPhone_Backup\DCIM\202406__\IMG_0284.HEIC";
+        if (!File.Exists(sampleHeic))
+        {
+            return; // Skip if environment does not have the sample file
+        }
+
+        using var image = new ImageMagick.MagickImage(sampleHeic);
+        Assert.True(image.Width > 0);
+        Assert.True(image.Height > 0);
+
+        image.AutoOrient();
+        image.Thumbnail(new ImageMagick.MagickGeometry(300, 300) { IgnoreAspectRatio = false });
+
+        using var ms = new MemoryStream();
+        image.Write(ms, ImageMagick.MagickFormat.Bmp);
+        Assert.True(ms.Length > 0);
+
+        ms.Position = 0;
+        var bitmap = new System.Windows.Media.Imaging.BitmapImage();
+        bitmap.BeginInit();
+        bitmap.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+        bitmap.StreamSource = ms;
+        bitmap.EndInit();
+        bitmap.Freeze();
+
+        Assert.NotNull(bitmap);
+        Assert.True(bitmap.PixelWidth > 0);
+        Assert.True(bitmap.PixelHeight > 0);
+    }
+
+    [System.Runtime.InteropServices.ComImport]
+    [System.Runtime.InteropServices.InterfaceType(System.Runtime.InteropServices.ComInterfaceType.InterfaceIsIUnknown)]
+    [System.Runtime.InteropServices.Guid("bcc18b79-ba16-442f-80c4-8a59c07c4e45")]
+    public interface IShellItemImageFactory
+    {
+        [System.Runtime.InteropServices.PreserveSig]
+        int GetImage([System.Runtime.InteropServices.In] POINT size, [System.Runtime.InteropServices.In] int flags, [System.Runtime.InteropServices.Out] out IntPtr phbm);
+    }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    public struct POINT { public int X; public int Y; }
+
+    [System.Runtime.InteropServices.DllImport("shell32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+    private static extern int SHCreateItemFromParsingName(
+        [System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPWStr)] string pszPath,
+        IntPtr pbc,
+        [System.Runtime.InteropServices.In] ref Guid riid,
+        [System.Runtime.InteropServices.Out, System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Interface)] out object ppv);
+
+    [System.Runtime.InteropServices.DllImport("gdi32.dll")]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static extern bool DeleteObject(IntPtr hObject);
+
+    [Fact]
+    public void ShellThumbnail_ExtractsForVideo()
+    {
+        string sampleMov = @"C:\Users\Admin\Pictures\iPhone_Backup\DCIM\202406__\IMG_0284.MOV";
+        if (!File.Exists(sampleMov)) return;
+
+        Guid factoryGuid = new Guid("bcc18b79-ba16-442f-80c4-8a59c07c4e45");
+        int hr = SHCreateItemFromParsingName(sampleMov, IntPtr.Zero, ref factoryGuid, out object obj);
+        if (hr == 0 && obj is IShellItemImageFactory factory)
+        {
+            hr = factory.GetImage(new POINT { X = 256, Y = 256 }, 0x0, out IntPtr hBitmap);
+            if (hr == 0 && hBitmap != IntPtr.Zero)
+            {
+                try
+                {
+                    var bs = System.Windows.Interop.Imaging.CreateBitmapSourceFromHBitmap(
+                        hBitmap,
+                        IntPtr.Zero,
+                        System.Windows.Int32Rect.Empty,
+                        System.Windows.Media.Imaging.BitmapSizeOptions.FromEmptyOptions());
+                    bs.Freeze();
+                    Assert.True(bs.PixelWidth > 0);
+                }
+                finally
+                {
+                    DeleteObject(hBitmap);
+                }
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ThumbnailService_GeneratesAndCachesThumbnails()
+    {
+        string sampleHeic = @"C:\Users\Admin\Pictures\iPhone_Backup\DCIM\202406__\IMG_0284.HEIC";
+        if (!File.Exists(sampleHeic)) return;
+
+        var service = new ThumbnailService();
+
+        // 1. First fetch generates thumbnail
+        var thumb1 = await service.GetThumbnailAsync(sampleHeic, targetSize: 200);
+        Assert.NotNull(thumb1);
+        Assert.True(thumb1.PixelWidth > 0);
+        Assert.True(thumb1.PixelHeight > 0);
+
+        // 2. Second fetch retrieves from memory cache (same reference)
+        var thumb2 = await service.GetThumbnailAsync(sampleHeic, targetSize: 200);
+        Assert.Same(thumb1, thumb2);
+
+        // 3. Full-resolution load
+        var full = await service.GetFullImageAsync(sampleHeic, maxWidth: 1920, maxHeight: 1080);
+        Assert.NotNull(full);
+        Assert.True(full.PixelWidth > thumb1.PixelWidth);
+    }
+
+    [Fact]
+    public async Task Gallery_ScansDestinationAndPairsLivePhotos()
+    {
+        string backupDir = @"C:\Users\Admin\Pictures\iPhone_Backup\DCIM";
+        if (!Directory.Exists(backupDir)) return;
+
+        var deviceService = new DeviceService();
+        var localStorage = new LocalStorageService();
+        var diffEngine = new DiffEngine();
+        var transferEngine = new TransferEngine(deviceService, localStorage);
+        var thumbnailService = new ThumbnailService();
+
+        var vm = new ViewModels.MainViewModel(deviceService, localStorage, diffEngine, transferEngine, thumbnailService)
+        {
+            DestinationFolder = @"C:\Users\Admin\Pictures\iPhone_Backup"
+        };
+
+        // Switch to gallery view and refresh
+        await vm.SwitchViewModeAsync("Gallery");
+        Assert.True(vm.IsGalleryView);
+        Assert.NotEmpty(vm.GalleryItems);
+
+        // Verify Live Photo pairing:
+        // Live Photo should pair IMG_0284.HEIC and IMG_0284.MOV into a single item with IsLivePhoto == true
+        var livePhotoItem = vm.GalleryItems.FirstOrDefault(i => i.IsLivePhoto);
+        Assert.NotNull(livePhotoItem);
+        Assert.True(livePhotoItem.IsLivePhoto);
+        Assert.NotNull(livePhotoItem.CompanionVideoPath);
+        Assert.True(File.Exists(livePhotoItem.CompanionVideoPath));
+        Assert.Equal(GalleryMediaType.LivePhoto, livePhotoItem.MediaType);
+
+        // Verify counts
+        Assert.True(vm.GalleryTotalPhotos > 0 || vm.GalleryTotalLivePhotos > 0);
+        Assert.Equal(vm.GalleryItems.Count, vm.FilteredGalleryItems.Count);
+    }
+
+    [Fact]
+    public async Task Gallery_FilteringAndLightboxNavigationWorks()
+    {
+        string backupDir = @"C:\Users\Admin\Pictures\iPhone_Backup\DCIM";
+        if (!Directory.Exists(backupDir)) return;
+
+        var deviceService = new DeviceService();
+        var localStorage = new LocalStorageService();
+        var diffEngine = new DiffEngine();
+        var transferEngine = new TransferEngine(deviceService, localStorage);
+        var thumbnailService = new ThumbnailService();
+
+        var vm = new ViewModels.MainViewModel(deviceService, localStorage, diffEngine, transferEngine, thumbnailService)
+        {
+            DestinationFolder = @"C:\Users\Admin\Pictures\iPhone_Backup"
+        };
+
+        await vm.RefreshGalleryAsync();
+        Assert.NotEmpty(vm.GalleryItems);
+
+        // 1. Filter by Live Photos
+        vm.GalleryFilter = "LivePhotos";
+        Assert.All(vm.FilteredGalleryItems, i => Assert.Equal(GalleryMediaType.LivePhoto, i.MediaType));
+
+        // 2. Filter by Videos
+        vm.GalleryFilter = "Videos";
+        Assert.All(vm.FilteredGalleryItems, i => Assert.True(i.IsVideo || i.IsLivePhoto));
+
+        // 3. Search text filter
+        vm.GalleryFilter = "All";
+        vm.GallerySearchText = "0284";
+        Assert.All(vm.FilteredGalleryItems, i => Assert.Contains("0284", i.FileName));
+
+        // 4. Lightbox opening and navigation
+        var firstItem = vm.FilteredGalleryItems.First();
+        await vm.OpenGalleryItemAsync(firstItem);
+
+        Assert.True(vm.IsLightboxOpen);
+        Assert.Equal(firstItem, vm.SelectedGalleryItem);
+        Assert.NotNull(vm.LightboxImage);
+
+        // Test Next navigation
+        if (vm.FilteredGalleryItems.Count > 1)
+        {
+            var expectedNext = vm.FilteredGalleryItems[1];
+            await vm.NextGalleryItemAsync();
+            Assert.Equal(expectedNext, vm.SelectedGalleryItem);
+        }
+
+        // Test Live Photo playback
+        if (vm.SelectedGalleryItem?.IsLivePhoto == true)
+        {
+            vm.PlayLivePhoto();
+            Assert.True(vm.IsLightboxLivePhotoPlaying);
+            Assert.True(vm.IsLightboxVideo);
+            Assert.Equal(vm.SelectedGalleryItem.CompanionVideoPath, vm.ActiveVideoUri);
+
+            vm.StopLivePhotoVideo();
+            Assert.False(vm.IsLightboxLivePhotoPlaying);
+            Assert.False(vm.IsLightboxVideo);
+        }
+
+        // Close Lightbox
+        vm.CloseLightbox();
+        Assert.False(vm.IsLightboxOpen);
+        Assert.Null(vm.SelectedGalleryItem);
+    }
 }
+
+
+
+

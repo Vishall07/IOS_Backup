@@ -10,6 +10,7 @@
 
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <PackageReference Include="Magick.NET-Q8-AnyCPU" Version="15.0.0" />
     <PackageReference Include="MediaDevices" Version="2.0.0" />
     <PackageReference Include="System.Threading.Tasks.Dataflow" Version="10.0.13" />
   </ItemGroup>

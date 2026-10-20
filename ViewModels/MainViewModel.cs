@@ -9,6 +9,7 @@ using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using IosBackupApp.Models;
+using IosBackupApp.Services;
 using IosBackupApp.Services.Interfaces;
 
 namespace IosBackupApp.ViewModels;
@@ -19,9 +20,11 @@ public partial class MainViewModel : ObservableObject
     private readonly ILocalStorageService _localStorageService;
     private readonly IDiffEngine _diffEngine;
     private readonly ITransferEngine _transferEngine;
+    private readonly IThumbnailService _thumbnailService;
 
     private CancellationTokenSource? _scanCts;
     private CancellationTokenSource? _transferCts;
+    private CancellationTokenSource? _galleryThumbnailCts;
     private readonly object _logLock = new();
 
     [ObservableProperty]
@@ -105,6 +108,65 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private string _modalSubtitle = "Real-time diagnostic trace";
 
+    #region Gallery & Lightbox Properties
+    [ObservableProperty]
+    private bool _isGalleryView;
+
+    [ObservableProperty]
+    private ObservableCollection<GalleryItemViewModel> _galleryItems = new();
+
+    [ObservableProperty]
+    private ObservableCollection<GalleryItemViewModel> _filteredGalleryItems = new();
+
+    [ObservableProperty]
+    private string _galleryFilter = "All"; // "All", "Photos", "Videos", "LivePhotos"
+
+    [ObservableProperty]
+    private string _gallerySearchText = string.Empty;
+
+    [ObservableProperty]
+    private int _galleryCardSize = 160;
+
+    [ObservableProperty]
+    private bool _isLoadingGallery;
+
+    [ObservableProperty]
+    private int _galleryTotalPhotos;
+
+    [ObservableProperty]
+    private int _galleryTotalVideos;
+
+    [ObservableProperty]
+    private int _galleryTotalLivePhotos;
+
+    [ObservableProperty]
+    private bool _isLightboxOpen;
+
+    [ObservableProperty]
+    private GalleryItemViewModel? _selectedGalleryItem;
+
+    [ObservableProperty]
+    private System.Windows.Media.Imaging.BitmapSource? _lightboxImage;
+
+    [ObservableProperty]
+    private bool _isLightboxLoadingImage;
+
+    [ObservableProperty]
+    private bool _isLightboxLivePhotoPlaying;
+
+    [ObservableProperty]
+    private bool _isLightboxVideo;
+
+    [ObservableProperty]
+    private string? _activeVideoUri;
+
+    [ObservableProperty]
+    private int _selectedGalleryIndex;
+
+    [ObservableProperty]
+    private string _lightboxCounter = string.Empty;
+    #endregion
+
     private FileDiffNodeViewModel? _rootDiffNode;
 
     public string SelectedSizeFormatted => StorageMetrics.FormatBytes(SelectedFilesBytes);
@@ -113,12 +175,14 @@ public partial class MainViewModel : ObservableObject
         IDeviceService deviceService,
         ILocalStorageService localStorageService,
         IDiffEngine diffEngine,
-        ITransferEngine transferEngine)
+        ITransferEngine transferEngine,
+        IThumbnailService? thumbnailService = null)
     {
         _deviceService = deviceService;
         _localStorageService = localStorageService;
         _diffEngine = diffEngine;
         _transferEngine = transferEngine;
+        _thumbnailService = thumbnailService ?? new ThumbnailService();
 
         // Default destination folder: ~/Pictures/iPhone_Backup
         string picturesDir = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);
@@ -129,6 +193,7 @@ public partial class MainViewModel : ObservableObject
 
         Log("iPhone Media Backup Application initialized.");
     }
+
 
     public async Task InitializeAsync()
     {
@@ -851,4 +916,385 @@ public partial class MainViewModel : ObservableObject
             Append();
         }
     }
+
+    #region Gallery & Lightbox Methods
+    partial void OnGalleryFilterChanged(string value) => ApplyGalleryFilter();
+    partial void OnGallerySearchTextChanged(string value) => ApplyGalleryFilter();
+
+    [RelayCommand]
+    public async Task SwitchViewModeAsync(string mode)
+    {
+        bool targetGallery = mode.Equals("Gallery", StringComparison.OrdinalIgnoreCase);
+        IsGalleryView = targetGallery;
+        Log($"Switched view mode to: {(IsGalleryView ? "Gallery" : "Tree View")}", LogLevel.Info, "UI");
+
+        if (IsGalleryView && GalleryItems.Count == 0)
+        {
+            await RefreshGalleryAsync();
+        }
+    }
+
+    [RelayCommand]
+    public async Task RefreshGalleryAsync()
+    {
+        if (IsLoadingGallery) return;
+        IsLoadingGallery = true;
+        Log("Scanning backup destination folder for media gallery...", LogLevel.Info, "GALLERY");
+
+        try
+        {
+            _galleryThumbnailCts?.Cancel();
+            _galleryThumbnailCts = new CancellationTokenSource();
+            var ct = _galleryThumbnailCts.Token;
+
+            string targetDir = DestinationFolder;
+            if (string.IsNullOrWhiteSpace(targetDir) || !Directory.Exists(targetDir))
+            {
+                Log($"Destination folder not accessible: {targetDir}", LogLevel.Warning, "GALLERY");
+                IsLoadingGallery = false;
+                return;
+            }
+
+            string dcimDir = Path.Combine(targetDir, "DCIM");
+            string scanDir = Directory.Exists(dcimDir) ? dcimDir : targetDir;
+
+            var items = await Task.Run(() => ScanDirectoryForGallery(scanDir, ct), ct);
+
+            GalleryItems.Clear();
+            foreach (var item in items)
+            {
+                GalleryItems.Add(item);
+            }
+
+            GalleryTotalPhotos = GalleryItems.Count(i => !i.IsVideo && !i.IsLivePhoto);
+            GalleryTotalLivePhotos = GalleryItems.Count(i => i.IsLivePhoto);
+            GalleryTotalVideos = GalleryItems.Count(i => i.IsVideo);
+
+            ApplyGalleryFilter();
+            Log($"Gallery loaded {GalleryItems.Count} items ({GalleryTotalPhotos} photos, {GalleryTotalLivePhotos} live photos, {GalleryTotalVideos} videos).", LogLevel.Success, "GALLERY");
+
+            StartLazyThumbnailLoading();
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            Log($"Failed to load gallery: {ex.Message}", LogLevel.Error, "GALLERY");
+        }
+        finally
+        {
+            IsLoadingGallery = false;
+        }
+    }
+
+    private static List<GalleryItemViewModel> ScanDirectoryForGallery(string scanRoot, CancellationToken ct)
+    {
+        var result = new List<GalleryItemViewModel>();
+        if (!Directory.Exists(scanRoot)) return result;
+
+        var supportedExts = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ".heic", ".heif", ".jpg", ".jpeg", ".png", ".mov", ".mp4", ".m4v"
+        };
+
+        var allFiles = new DirectoryInfo(scanRoot)
+            .EnumerateFiles("*.*", SearchOption.AllDirectories)
+            .Where(f => supportedExts.Contains(f.Extension))
+            .ToList();
+
+        // Group files by directory + name without extension to detect Apple Live Photo pairs
+        var dirGroups = allFiles.GroupBy(f => f.DirectoryName ?? string.Empty);
+
+        foreach (var dirGroup in dirGroups)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var baseGroups = dirGroup.GroupBy(f => Path.GetFileNameWithoutExtension(f.Name), StringComparer.OrdinalIgnoreCase);
+
+            foreach (var baseGroup in baseGroups)
+            {
+                var files = baseGroup.ToList();
+                var stillFile = files.FirstOrDefault(f => f.Extension.Equals(".heic", StringComparison.OrdinalIgnoreCase)
+                                                       || f.Extension.Equals(".jpg", StringComparison.OrdinalIgnoreCase)
+                                                       || f.Extension.Equals(".jpeg", StringComparison.OrdinalIgnoreCase)
+                                                       || f.Extension.Equals(".png", StringComparison.OrdinalIgnoreCase));
+
+                var movFile = files.FirstOrDefault(f => f.Extension.Equals(".mov", StringComparison.OrdinalIgnoreCase)
+                                                     || f.Extension.Equals(".mp4", StringComparison.OrdinalIgnoreCase));
+
+                // 1. Paired Apple Live Photo (Still + MOV companion)
+                if (stillFile != null && movFile != null)
+                {
+                    bool isHeic = stillFile.Extension.Equals(".heic", StringComparison.OrdinalIgnoreCase)
+                               || stillFile.Extension.Equals(".heif", StringComparison.OrdinalIgnoreCase);
+
+                    result.Add(new GalleryItemViewModel
+                    {
+                        FilePath = stillFile.FullName,
+                        FileName = stillFile.Name,
+                        RelativePath = Path.GetRelativePath(scanRoot, stillFile.FullName),
+                        Folder = stillFile.Directory?.Name ?? string.Empty,
+                        FileSize = stillFile.Length + movFile.Length,
+                        DateModified = stillFile.LastWriteTime,
+                        MediaType = GalleryMediaType.LivePhoto,
+                        IsLivePhoto = true,
+                        IsHeic = isHeic,
+                        CompanionVideoPath = movFile.FullName,
+                        DurationFormatted = "0:03"
+                    });
+                }
+                // 2. Standalone Still Photo
+                else if (stillFile != null)
+                {
+                    bool isHeic = stillFile.Extension.Equals(".heic", StringComparison.OrdinalIgnoreCase)
+                               || stillFile.Extension.Equals(".heif", StringComparison.OrdinalIgnoreCase);
+
+                    result.Add(new GalleryItemViewModel
+                    {
+                        FilePath = stillFile.FullName,
+                        FileName = stillFile.Name,
+                        RelativePath = Path.GetRelativePath(scanRoot, stillFile.FullName),
+                        Folder = stillFile.Directory?.Name ?? string.Empty,
+                        FileSize = stillFile.Length,
+                        DateModified = stillFile.LastWriteTime,
+                        MediaType = GalleryMediaType.Photo,
+                        IsLivePhoto = false,
+                        IsHeic = isHeic
+                    });
+                }
+                // 3. Standalone Video (.MOV, .MP4)
+                else if (movFile != null)
+                {
+                    result.Add(new GalleryItemViewModel
+                    {
+                        FilePath = movFile.FullName,
+                        FileName = movFile.Name,
+                        RelativePath = Path.GetRelativePath(scanRoot, movFile.FullName),
+                        Folder = movFile.Directory?.Name ?? string.Empty,
+                        FileSize = movFile.Length,
+                        DateModified = movFile.LastWriteTime,
+                        MediaType = GalleryMediaType.Video,
+                        IsVideo = true,
+                        IsLivePhoto = false
+                    });
+                }
+            }
+        }
+
+        // Sort descending by modified date (latest photos first, just like iPhone)
+        return result.OrderByDescending(r => r.DateModified).ToList();
+    }
+
+    public void ApplyGalleryFilter()
+    {
+        var query = GalleryItems.AsEnumerable();
+
+        // 1. Media Type Filter
+        query = GalleryFilter switch
+        {
+            "Photos" => query.Where(i => i.MediaType is GalleryMediaType.Photo or GalleryMediaType.LivePhoto),
+            "Videos" => query.Where(i => i.MediaType is GalleryMediaType.Video or GalleryMediaType.LivePhoto),
+            "LivePhotos" => query.Where(i => i.MediaType == GalleryMediaType.LivePhoto),
+            _ => query
+        };
+
+        // 2. Search Text
+        if (!string.IsNullOrWhiteSpace(GallerySearchText))
+        {
+            string term = GallerySearchText.Trim();
+            query = query.Where(i => i.FileName.Contains(term, StringComparison.OrdinalIgnoreCase)
+                                  || i.Folder.Contains(term, StringComparison.OrdinalIgnoreCase));
+        }
+
+        FilteredGalleryItems.Clear();
+        foreach (var item in query)
+        {
+            FilteredGalleryItems.Add(item);
+        }
+    }
+
+    private void StartLazyThumbnailLoading()
+    {
+        var ct = _galleryThumbnailCts?.Token ?? CancellationToken.None;
+        var snapshot = FilteredGalleryItems.ToList();
+
+        Task.Run(async () =>
+        {
+            foreach (var item in snapshot)
+            {
+                if (ct.IsCancellationRequested) break;
+                if (item.Thumbnail != null) continue;
+
+                item.IsThumbnailLoading = true;
+                try
+                {
+                    var thumb = await _thumbnailService.GetThumbnailAsync(item.FilePath, targetSize: 280, ct);
+                    if (thumb != null)
+                    {
+                        if (Application.Current?.Dispatcher != null)
+                        {
+                            Application.Current.Dispatcher.Invoke(() => item.Thumbnail = thumb);
+                        }
+                        else
+                        {
+                            item.Thumbnail = thumb;
+                        }
+                    }
+                }
+                catch { }
+                finally
+                {
+                    item.IsThumbnailLoading = false;
+                }
+            }
+        }, ct);
+    }
+
+    [RelayCommand]
+    public async Task OpenGalleryItemAsync(GalleryItemViewModel? item)
+    {
+        if (item == null) return;
+
+        SelectedGalleryItem = item;
+        IsLightboxOpen = true;
+        IsLightboxLivePhotoPlaying = false;
+
+        int idx = FilteredGalleryItems.IndexOf(item);
+        SelectedGalleryIndex = idx >= 0 ? idx : 0;
+        LightboxCounter = $"{SelectedGalleryIndex + 1} of {FilteredGalleryItems.Count}";
+
+        if (item.IsVideo)
+        {
+            IsLightboxVideo = true;
+            ActiveVideoUri = item.FilePath;
+            LightboxImage = item.Thumbnail;
+        }
+        else
+        {
+            IsLightboxVideo = false;
+            ActiveVideoUri = null;
+            LightboxImage = item.Thumbnail; // Instant responsive preview
+            IsLightboxLoadingImage = true;
+
+            try
+            {
+                var fullBmp = await _thumbnailService.GetFullImageAsync(item.FilePath);
+                if (SelectedGalleryItem == item && fullBmp != null)
+                {
+                    LightboxImage = fullBmp;
+                }
+            }
+            finally
+            {
+                IsLightboxLoadingImage = false;
+            }
+        }
+    }
+
+    [RelayCommand]
+    public void CloseLightbox()
+    {
+        IsLightboxOpen = false;
+        IsLightboxVideo = false;
+        IsLightboxLivePhotoPlaying = false;
+        ActiveVideoUri = null;
+        LightboxImage = null;
+        SelectedGalleryItem = null;
+    }
+
+    [RelayCommand]
+    public async Task NextGalleryItemAsync()
+    {
+        if (FilteredGalleryItems.Count == 0) return;
+        int next = (SelectedGalleryIndex + 1) % FilteredGalleryItems.Count;
+        await OpenGalleryItemAsync(FilteredGalleryItems[next]);
+    }
+
+    [RelayCommand]
+    public async Task PreviousGalleryItemAsync()
+    {
+        if (FilteredGalleryItems.Count == 0) return;
+        int prev = (SelectedGalleryIndex - 1 + FilteredGalleryItems.Count) % FilteredGalleryItems.Count;
+        await OpenGalleryItemAsync(FilteredGalleryItems[prev]);
+    }
+
+    [RelayCommand]
+    public void PlayLivePhoto()
+    {
+        if (SelectedGalleryItem == null || !SelectedGalleryItem.IsLivePhoto) return;
+        if (string.IsNullOrEmpty(SelectedGalleryItem.CompanionVideoPath) || !File.Exists(SelectedGalleryItem.CompanionVideoPath)) return;
+
+        if (!IsLightboxLivePhotoPlaying)
+        {
+            IsLightboxLivePhotoPlaying = true;
+            ActiveVideoUri = SelectedGalleryItem.CompanionVideoPath;
+            IsLightboxVideo = true;
+        }
+        else
+        {
+            StopLivePhotoVideo();
+        }
+    }
+
+    public void StopLivePhotoVideo()
+    {
+        IsLightboxLivePhotoPlaying = false;
+        IsLightboxVideo = false;
+        ActiveVideoUri = null;
+    }
+
+    [RelayCommand]
+    public void OpenSelectedInExplorer()
+    {
+        if (SelectedGalleryItem == null || !File.Exists(SelectedGalleryItem.FilePath)) return;
+        try
+        {
+            Process.Start("explorer.exe", $"/select,\"{SelectedGalleryItem.FilePath}\"");
+        }
+        catch { }
+    }
+
+    [RelayCommand]
+    public async Task PreviewTreeItemAsync(FileDiffNodeViewModel? node)
+    {
+        if (node == null || node.IsDirectory) return;
+
+        string targetPath = !string.IsNullOrEmpty(node.FullPathDest) && File.Exists(node.FullPathDest)
+            ? node.FullPathDest
+            : string.Empty;
+
+        if (string.IsNullOrEmpty(targetPath))
+        {
+            Log($"Cannot preview '{node.Name}': File has not been backed up to laptop disk yet.", LogLevel.Warning, "PREVIEW");
+            return;
+        }
+
+        // Find or synthesize gallery item
+        var existing = GalleryItems.FirstOrDefault(g => g.FilePath.Equals(targetPath, StringComparison.OrdinalIgnoreCase));
+        if (existing != null)
+        {
+            await OpenGalleryItemAsync(existing);
+            return;
+        }
+
+        string ext = Path.GetExtension(targetPath).ToLowerInvariant();
+        bool isVid = ext is ".mov" or ".mp4" or ".m4v";
+        bool isHeic = ext is ".heic" or ".heif";
+
+        var synth = new GalleryItemViewModel
+        {
+            FilePath = targetPath,
+            FileName = node.Name,
+            RelativePath = node.RelativePath,
+            FileSize = node.Size,
+            DateModified = File.GetLastWriteTime(targetPath),
+            IsVideo = isVid,
+            IsHeic = isHeic,
+            MediaType = isVid ? GalleryMediaType.Video : (node.IsLivePhotoStill ? GalleryMediaType.LivePhoto : GalleryMediaType.Photo),
+            IsLivePhoto = node.IsLivePhotoStill
+        };
+
+        await OpenGalleryItemAsync(synth);
+    }
+    #endregion
 }
+
