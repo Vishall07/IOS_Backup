@@ -380,11 +380,96 @@ public partial class MainViewModel : ObservableObject
     }
 
     [RelayCommand]
+    public async Task BackupNotBackedUpAsync()
+    {
+        if (IsTransferring || IsScanning) return;
+
+        if (SelectedDevice == null)
+        {
+            MessageBox.Show("Please select an iPhone device or Demo Mode first.", "No Device", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(DestinationFolder))
+        {
+            MessageBox.Show("Please choose a backup destination folder first.", "Destination Required", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        // 1. If media has not been scanned or diff not generated, run scan & diff comparison between iPhone and laptop JSON
+        if (_rootDiffNode == null)
+        {
+            Log("Computing diff between iPhone and laptop backup JSON to discover unbacked files...", LogLevel.Info, "DIFF");
+            await ScanAsync();
+            if (_rootDiffNode == null) return;
+        }
+
+        // 2. Select strictly only PendingBackup items and uncheck all already backed-up items ("rest should not be backedUp")
+        SelectAllPending();
+
+        // 3. Switch filter mode to show only pending files and expand all folders so user sees the files
+        FilterMode = "PendingOnly";
+        SetExpansionRecursive(_rootDiffNode, true);
+
+        var filesToTransfer = _rootDiffNode.GetSelectedFiles()
+            .Where(f => f.Status == FileDiffStatus.PendingBackup)
+            .ToList();
+
+        if (filesToTransfer.Count == 0)
+        {
+            Log("Diff check complete: All iPhone media files already exist in laptop backup (0 files to back up).", LogLevel.Success, "DIFF");
+            MessageBox.Show("All iPhone media files are already backed up!\n\nNo unbacked photos or videos were found between iPhone and laptop JSON.", "Everything Backed Up", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        Log($"Diff result: Found {filesToTransfer.Count} unbacked media file(s) ({StorageMetrics.FormatBytes(filesToTransfer.Sum(f => f.Size))}). Initiating backup of unbacked files only...", LogLevel.Info, "DIFF");
+
+        // 4. Begin backup transfer of strictly those unbacked files
+        await ExecuteTransferAsync(filesToTransfer);
+    }
+
+    [RelayCommand]
+    public async Task FindDiffAndShowPendingAsync()
+    {
+        if (IsScanning || IsTransferring) return;
+
+        if (SelectedDevice == null)
+        {
+            MessageBox.Show("Please select an iPhone device or Demo Mode first.", "No Device", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(DestinationFolder))
+        {
+            MessageBox.Show("Please choose a backup destination folder first.", "Destination Required", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        if (_rootDiffNode == null)
+        {
+            Log("Comparing iPhone and laptop JSON to compute media diff...", LogLevel.Info, "DIFF");
+            await ScanAsync();
+            if (_rootDiffNode == null) return;
+        }
+
+        SelectAllPending();
+        FilterMode = "PendingOnly";
+        SetExpansionRecursive(_rootDiffNode, true);
+        Log($"Diff view: Showing {PendingFilesCount} unbacked media file(s) ({SelectedSizeFormatted}) needing backup.", LogLevel.Info, "DIFF");
+    }
+
+    [RelayCommand]
     public async Task StartBackupAsync()
     {
         if (SelectedDevice == null)
         {
             MessageBox.Show("Please select an iPhone device or Demo Mode first.", "No Device", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(DestinationFolder))
+        {
+            MessageBox.Show("Please choose a backup destination folder first.", "Destination Required", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
@@ -396,7 +481,6 @@ public partial class MainViewModel : ObservableObject
 
             if (_rootDiffNode == null)
             {
-                // Scan did not produce files (e.g. cancelled or device locked)
                 return;
             }
         }
@@ -404,7 +488,6 @@ public partial class MainViewModel : ObservableObject
         var filesToTransfer = _rootDiffNode.GetSelectedFiles().ToList();
         if (filesToTransfer.Count == 0)
         {
-            // If no files checked, automatically check all pending backup files
             SelectAllPending();
             filesToTransfer = _rootDiffNode.GetSelectedFiles().ToList();
             if (filesToTransfer.Count == 0)
@@ -413,6 +496,13 @@ public partial class MainViewModel : ObservableObject
                 return;
             }
         }
+
+        await ExecuteTransferAsync(filesToTransfer);
+    }
+
+    private async Task ExecuteTransferAsync(List<FileDiffNodeViewModel> filesToTransfer)
+    {
+        if (SelectedDevice == null) return;
 
         IsTransferring = true;
         IsPaused = false;

@@ -384,4 +384,60 @@ public class AppTests
             }
         }
     }
+
+    [Fact]
+    public async Task MainViewModel_BackupOnlyNotBackedUp_CalculatesDiffAndTransfersOnlyPending()
+    {
+        var deviceService = new DeviceService();
+        var localStorage = new LocalStorageService();
+        var diffEngine = new DiffEngine();
+        var transferEngine = new TransferEngine(deviceService, localStorage);
+
+        string tempDest = Path.Combine(Path.GetTempPath(), "IosBackupUnbackedOnlyTest_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDest);
+
+        try
+        {
+            var vm = new ViewModels.MainViewModel(deviceService, localStorage, diffEngine, transferEngine)
+            {
+                DestinationFolder = tempDest
+            };
+
+            await vm.InitializeAsync();
+            var simDev = vm.Devices.First(d => d.Id == DeviceService.SimulatedDeviceId);
+            vm.SelectedDevice = simDev;
+
+            // 1. Test FindDiffAndShowPendingAsync without prior manual scan
+            await vm.FindDiffAndShowPendingAsync();
+
+            Assert.Equal("PendingOnly", vm.FilterMode);
+            Assert.True(vm.PendingFilesCount > 0);
+            Assert.Equal(vm.PendingFilesCount, vm.SelectedFilesCount);
+
+            // Verify all selected files are strictly PendingBackup
+            var selectedFiles = vm.TreeItems.SelectMany(folder => folder.GetSelectedFiles()).ToList();
+            Assert.NotEmpty(selectedFiles);
+            Assert.All(selectedFiles, f => Assert.Equal(Models.FileDiffStatus.PendingBackup, f.Status));
+
+            // 2. Perform BackupNotBackedUpAsync
+            await vm.BackupNotBackedUpAsync();
+
+            // After transfer completes, pending files should decrease and files exist in destination
+            Assert.Equal(0, vm.PendingFilesCount);
+            Assert.Equal(vm.TotalFilesCount, vm.BackedUpFilesCount);
+
+            // Verify files actually copied to disk
+            string dcimDir = Path.Combine(tempDest, "DCIM");
+            Assert.True(Directory.Exists(dcimDir));
+            var copiedFiles = Directory.GetFiles(dcimDir, "*.*", SearchOption.AllDirectories);
+            Assert.Equal(vm.TotalFilesCount, copiedFiles.Length);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDest))
+            {
+                Directory.Delete(tempDest, recursive: true);
+            }
+        }
+    }
 }

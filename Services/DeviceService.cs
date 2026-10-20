@@ -492,11 +492,11 @@ public class DeviceService : IDeviceService
         IProgress<long>? byteProgress,
         CancellationToken ct)
     {
-        // Extract size hint or generate realistic bytes (e.g. 2 MB - 8 MB)
-        long fileSize = 3_500_000;
+        // Extract size hint or generate realistic bytes (e.g. 1.5 MB - 5 MB)
+        long fileSize = 1_500_000;
         if (sourcePath.EndsWith(".MOV", StringComparison.OrdinalIgnoreCase) || sourcePath.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase))
         {
-            fileSize = 15_000_000; // 15 MB video
+            fileSize = 5_000_000;
         }
 
         byte[] buffer = new byte[65536];
@@ -512,8 +512,8 @@ public class DeviceService : IDeviceService
             await fs.WriteAsync(buffer.AsMemory(0, toWrite), ct);
             written += toWrite;
             byteProgress?.Report(written);
-            // Simulate realistic USB transfer speed (~40 MB/s Lightning)
-            await Task.Delay(2, ct);
+            // Async yield to keep UI responsive and speed calculations smooth
+            await Task.Yield();
         }
 
         File.SetLastWriteTime(destPath, DateTime.Now.AddDays(-10));
