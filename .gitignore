@@ -1,0 +1,13 @@
+## Visual Studio & Build Outputs
+.vs/
+[Bb]in/
+[Oo]bj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+## Metadata & Temporary
+.backup_metadata/
+TestResults/
+*.log
