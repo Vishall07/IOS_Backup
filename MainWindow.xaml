@@ -424,6 +424,11 @@
                 <!-- Name & Child Count -->
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock Text="{Binding Name}" FontWeight="Medium" Foreground="#F8FAFC" FontSize="13" />
+                    <!-- Live Photo Badge if paired -->
+                    <Border Background="#162032" BorderBrush="#38BDF8" BorderThickness="1" CornerRadius="4" Padding="5,1" Margin="8,0,0,0"
+                            Visibility="{Binding HasLivePhotoBadge, Converter={StaticResource BoolToVisConverter}}">
+                        <TextBlock Text="{Binding LivePhotoBadge}" FontSize="10" FontWeight="SemiBold" Foreground="#38BDF8" />
+                    </Border>
                     <TextBlock Text="{Binding ItemCount, StringFormat=' ({0} files)'}" 
                                Foreground="{StaticResource TextSecondary}" FontSize="12" Margin="6,0,0,0">
                         <TextBlock.Style>
@@ -766,6 +771,13 @@
 
                         <!-- Filter Tabs -->
                         <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right">
+                            <!-- Live Photo Exclude Option -->
+                            <CheckBox IsChecked="{Binding SkipLivePhotoVideos, Mode=TwoWay}"
+                                      Content="Exclude Live Photo Clips (.MOV)" 
+                                      FontSize="11" Foreground="#38BDF8" FontWeight="SemiBold"
+                                      ToolTip="When checked, 3-second motion videos (.MOV) paired with Live Photos are excluded from backup, backing up strictly high-res photos (.HEIC/.JPG) and standalone videos."
+                                      Margin="0,0,14,0" VerticalAlignment="Center" />
+
                             <RadioButton Content="All" IsChecked="{Binding FilterMode, Converter={x:Null}}" 
                                          ToolTip="Show all files in the tree view"
                                          Foreground="#F8FAFC" Margin="0,0,12,0" VerticalAlignment="Center">

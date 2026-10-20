@@ -95,6 +95,31 @@ public class DiffEngine : IDiffEngine
                     var childVm = BuildViewModelTree(childNode, vm, laptopLookup, destinationDirectory, summary);
                     vm.Children.Add(childVm);
                 }
+
+                // Detect paired Apple Live Photos:
+                // iOS creates an IMG_XXXX.HEIC/JPG still photo paired with an IMG_XXXX.MOV video clip
+                var photoBaseNames = new HashSet<string>(
+                    vm.Children
+                        .Where(c => !c.IsDirectory && IsPhotoExtension(c.Name))
+                        .Select(c => Path.GetFileNameWithoutExtension(c.Name)),
+                    StringComparer.OrdinalIgnoreCase);
+
+                foreach (var child in vm.Children.Where(c => !c.IsDirectory))
+                {
+                    string baseName = Path.GetFileNameWithoutExtension(child.Name);
+                    if (IsVideoExtension(child.Name) && photoBaseNames.Contains(baseName))
+                    {
+                        child.IsLivePhotoVideo = true;
+                    }
+                    else if (IsPhotoExtension(child.Name))
+                    {
+                        bool hasMatchingMov = vm.Children.Any(c => !c.IsDirectory && IsVideoExtension(c.Name) && string.Equals(Path.GetFileNameWithoutExtension(c.Name), baseName, StringComparison.OrdinalIgnoreCase));
+                        if (hasMatchingMov)
+                        {
+                            child.IsLivePhotoStill = true;
+                        }
+                    }
+                }
             }
 
             // Folder status is Pending if any child is Pending
@@ -169,5 +194,17 @@ public class DiffEngine : IDiffEngine
             return p;
         }
         return $"DCIM/{p}";
+    }
+
+    private static bool IsPhotoExtension(string fileName)
+    {
+        var ext = Path.GetExtension(fileName).ToLowerInvariant();
+        return ext is ".heic" or ".jpg" or ".jpeg" or ".png" or ".raw" or ".dng";
+    }
+
+    private static bool IsVideoExtension(string fileName)
+    {
+        var ext = Path.GetExtension(fileName).ToLowerInvariant();
+        return ext is ".mov" or ".mp4" or ".m4v";
     }
 }

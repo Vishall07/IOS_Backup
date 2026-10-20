@@ -82,6 +82,9 @@ public partial class MainViewModel : ObservableObject
     private string _filterMode = "All"; // "All", "PendingOnly", "BackedUpOnly"
 
     [ObservableProperty]
+    private bool _skipLivePhotoVideos = true;
+
+    [ObservableProperty]
     private string _iphoneStateFilePath = string.Empty;
 
     [ObservableProperty]
@@ -412,13 +415,16 @@ public partial class MainViewModel : ObservableObject
         SetExpansionRecursive(_rootDiffNode, true);
 
         var filesToTransfer = _rootDiffNode.GetSelectedFiles()
-            .Where(f => f.Status == FileDiffStatus.PendingBackup)
+            .Where(f => f.Status == FileDiffStatus.PendingBackup && (!SkipLivePhotoVideos || !f.IsLivePhotoVideo))
             .ToList();
 
         if (filesToTransfer.Count == 0)
         {
-            Log("Diff check complete: All iPhone media files already exist in laptop backup (0 files to back up).", LogLevel.Success, "DIFF");
-            MessageBox.Show("All iPhone media files are already backed up!\n\nNo unbacked photos or videos were found between iPhone and laptop JSON.", "Everything Backed Up", MessageBoxButton.OK, MessageBoxImage.Information);
+            string emptyMsg = SkipLivePhotoVideos 
+                ? "All iPhone photos and standalone videos are already backed up!\n\n(Live Photo .MOV video clips are currently excluded. Uncheck 'Exclude Live Photo Clips' if you wish to back up 3-second motion clips too.)"
+                : "All iPhone media files are already backed up!\n\nNo unbacked photos or videos were found between iPhone and laptop JSON.";
+            Log("Diff check complete: All media files on iPhone already exist in laptop backup (0 files to back up).", LogLevel.Success, "DIFF");
+            MessageBox.Show(emptyMsg, "Everything Backed Up", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
@@ -618,7 +624,14 @@ public partial class MainViewModel : ObservableObject
         if (_rootDiffNode == null) return;
         foreach (var file in _rootDiffNode.GetAllFiles())
         {
-            file.IsChecked = file.Status == FileDiffStatus.PendingBackup;
+            if (SkipLivePhotoVideos && file.IsLivePhotoVideo)
+            {
+                file.IsChecked = false;
+            }
+            else
+            {
+                file.IsChecked = file.Status == FileDiffStatus.PendingBackup;
+            }
         }
         RecalculateSelectionStats();
     }
@@ -671,6 +684,12 @@ public partial class MainViewModel : ObservableObject
         ApplyFilter();
     }
 
+    partial void OnSkipLivePhotoVideosChanged(bool value)
+    {
+        SelectAllPending();
+        ApplyFilter();
+    }
+
     private void ApplyFilter()
     {
         if (_rootDiffNode == null) return;
@@ -678,7 +697,7 @@ public partial class MainViewModel : ObservableObject
         UpdateTreeDisplay();
     }
 
-    private static bool ApplyFilterRecursive(FileDiffNodeViewModel node, string search, string filterMode)
+    private bool ApplyFilterRecursive(FileDiffNodeViewModel node, string search, string filterMode)
     {
         if (!node.IsDirectory)
         {
@@ -689,8 +708,9 @@ public partial class MainViewModel : ObservableObject
                 "BackedUpOnly" => node.Status == FileDiffStatus.BackedUp || node.Status == FileDiffStatus.Success,
                 _ => true
             };
+            bool matchesLivePhoto = !SkipLivePhotoVideos || !node.IsLivePhotoVideo;
 
-            node.IsVisible = matchesSearch && matchesStatus;
+            node.IsVisible = matchesSearch && matchesStatus && matchesLivePhoto;
             return node.IsVisible;
         }
 

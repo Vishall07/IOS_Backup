@@ -41,6 +41,12 @@ public partial class FileDiffNodeViewModel : ObservableObject
     [ObservableProperty]
     private int _itemCount;
 
+    [ObservableProperty]
+    private bool _isLivePhotoVideo;
+
+    [ObservableProperty]
+    private bool _isLivePhotoStill;
+
     public FileDiffNodeViewModel? Parent { get; set; }
 
     public ObservableCollection<FileDiffNodeViewModel> Children { get; set; } = new();
@@ -53,6 +59,9 @@ public partial class FileDiffNodeViewModel : ObservableObject
 
     public string FormattedSize => StorageMetrics.FormatBytes(Size);
 
+    public string LivePhotoBadge => IsLivePhotoVideo ? "Live Clip (.MOV)" : (IsLivePhotoStill ? "Live Photo" : string.Empty);
+    public bool HasLivePhotoBadge => IsLivePhotoVideo || IsLivePhotoStill;
+
     public string StatusText => Status switch
     {
         FileDiffStatus.PendingBackup => "Pending Backup",
@@ -64,11 +73,13 @@ public partial class FileDiffNodeViewModel : ObservableObject
 
     public string IconKind => IsDirectory 
         ? (IsExpanded ? "FolderOpen" : "Folder") 
-        : GetFileIcon(Name);
+        : GetFileIcon();
 
-    private static string GetFileIcon(string filename)
+    private string GetFileIcon()
     {
-        var ext = System.IO.Path.GetExtension(filename).ToLowerInvariant();
+        if (IsLivePhotoVideo) return "LiveVideo";
+        if (IsLivePhotoStill) return "LivePhoto";
+        var ext = System.IO.Path.GetExtension(Name).ToLowerInvariant();
         return ext switch
         {
             ".heic" or ".jpg" or ".jpeg" or ".png" or ".gif" or ".raw" or ".dng" => "Image",
