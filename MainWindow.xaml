@@ -196,6 +196,195 @@
             <Setter Property="VerticalContentAlignment" Value="Center" />
         </Style>
 
+        <!-- Modern ToolTip Style -->
+        <Style TargetType="ToolTip">
+            <Setter Property="Background" Value="#0F172A" />
+            <Setter Property="Foreground" Value="#F8FAFC" />
+            <Setter Property="BorderBrush" Value="#334155" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="9,6" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="HasDropShadow" Value="True" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToolTip">
+                        <Border Background="#0F172A" BorderBrush="#334155" BorderThickness="1" CornerRadius="6" Padding="9,6">
+                            <ContentPresenter />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ComboBox Toggle Button Template -->
+        <ControlTemplate x:Key="ModernComboBoxToggleButtonTemplate" TargetType="ToggleButton">
+            <Border x:Name="templateRoot" 
+                    Background="{TemplateBinding Background}" 
+                    BorderBrush="{TemplateBinding BorderBrush}" 
+                    BorderThickness="{TemplateBinding BorderThickness}" 
+                    CornerRadius="6" 
+                    SnapsToDevicePixels="true">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="28" />
+                    </Grid.ColumnDefinitions>
+                    <!-- Chevron Down Path -->
+                    <Path x:Name="arrow" 
+                          Grid.Column="1"
+                          Data="M 0 0 L 4 4 L 8 0" 
+                          Stroke="#94A3B8" 
+                          StrokeThickness="2" 
+                          StrokeStartLineCap="Round"
+                          StrokeEndLineCap="Round"
+                          HorizontalAlignment="Center" 
+                          VerticalAlignment="Center" />
+                </Grid>
+            </Border>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="true">
+                    <Setter TargetName="templateRoot" Property="BorderBrush" Value="#38BDF8" />
+                    <Setter TargetName="templateRoot" Property="Background" Value="#1E293B" />
+                    <Setter TargetName="arrow" Property="Stroke" Value="#38BDF8" />
+                </Trigger>
+                <Trigger Property="IsChecked" Value="true">
+                    <Setter TargetName="templateRoot" Property="BorderBrush" Value="#38BDF8" />
+                    <Setter TargetName="templateRoot" Property="Background" Value="#1E293B" />
+                    <Setter TargetName="arrow" Property="Stroke" Value="#38BDF8" />
+                    <Setter TargetName="arrow" Property="Data" Value="M 0 4 L 4 0 L 8 4" />
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="false">
+                    <Setter TargetName="templateRoot" Property="Opacity" Value="0.5" />
+                    <Setter TargetName="arrow" Property="Stroke" Value="#64748B" />
+                </Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate>
+
+        <!-- Modern ComboBoxItem Style -->
+        <Style x:Key="ModernComboBoxItem" TargetType="ComboBoxItem">
+            <Setter Property="SnapsToDevicePixels" Value="True" />
+            <Setter Property="Padding" Value="10,8" />
+            <Setter Property="HorizontalContentAlignment" Value="Left" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Foreground" Value="#F8FAFC" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBoxItem">
+                        <Border x:Name="itemBorder" 
+                                Background="{TemplateBinding Background}" 
+                                BorderBrush="{TemplateBinding BorderBrush}" 
+                                BorderThickness="{TemplateBinding BorderThickness}" 
+                                Padding="{TemplateBinding Padding}" 
+                                Margin="2,1"
+                                CornerRadius="4" 
+                                SnapsToDevicePixels="true">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" 
+                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}" 
+                                              SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="true">
+                                <Setter TargetName="itemBorder" Property="Background" Value="#334155" />
+                                <Setter Property="Foreground" Value="#38BDF8" />
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="true">
+                                <Setter TargetName="itemBorder" Property="Background" Value="#334155" />
+                                <Setter Property="Foreground" Value="#38BDF8" />
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="true">
+                                <Setter TargetName="itemBorder" Property="Background" Value="#2563EB" />
+                                <Setter Property="Foreground" Value="#FFFFFF" />
+                                <Setter Property="FontWeight" Value="SemiBold" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="false">
+                                <Setter Property="Foreground" Value="#64748B" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Modern ComboBox Style -->
+        <Style x:Key="ModernComboBox" TargetType="ComboBox">
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Background" Value="#0F172A" />
+            <Setter Property="Foreground" Value="#F8FAFC" />
+            <Setter Property="BorderBrush" Value="#334155" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Height" Value="34" />
+            <Setter Property="Padding" Value="10,0,28,0" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="HorizontalContentAlignment" Value="Left" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="MaxDropDownHeight" Value="300" />
+            <Setter Property="ItemContainerStyle" Value="{StaticResource ModernComboBoxItem}" />
+            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled" />
+            <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto" />
+            <Setter Property="ScrollViewer.CanContentScroll" Value="true" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid x:Name="templateRoot" SnapsToDevicePixels="true">
+                            <ToggleButton x:Name="toggleButton" 
+                                          Background="{TemplateBinding Background}" 
+                                          BorderBrush="{TemplateBinding BorderBrush}" 
+                                          BorderThickness="{TemplateBinding BorderThickness}" 
+                                          IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}" 
+                                          Focusable="False" 
+                                          ClickMode="Press"
+                                          Template="{StaticResource ModernComboBoxToggleButtonTemplate}" />
+
+                            <ContentPresenter x:Name="contentPresenter" 
+                                              Content="{TemplateBinding SelectionBoxItem}" 
+                                              ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}" 
+                                              ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}" 
+                                              ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}" 
+                                              HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" 
+                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}" 
+                                              IsHitTestVisible="false" 
+                                              Margin="{TemplateBinding Padding}" 
+                                              SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}" />
+
+                            <Popup x:Name="PART_Popup" 
+                                   AllowsTransparency="true" 
+                                   IsOpen="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}" 
+                                   Placement="Bottom" 
+                                   VerticalOffset="2"
+                                   PopupAnimation="Fade"
+                                   Focusable="False">
+                                <Border x:Name="dropDownBorder" 
+                                        MinWidth="{Binding ActualWidth, ElementName=templateRoot}" 
+                                        MaxHeight="{TemplateBinding MaxDropDownHeight}" 
+                                        Background="#1E293B" 
+                                        BorderBrush="#334155" 
+                                        BorderThickness="1" 
+                                        CornerRadius="6" 
+                                        Padding="2">
+                                    <ScrollViewer x:Name="DropDownScrollViewer" Focusable="false" CanContentScroll="True">
+                                        <ItemsPresenter x:Name="ItemsPresenter" 
+                                                        KeyboardNavigation.DirectionalNavigation="Contained" 
+                                                        SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}" />
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="HasItems" Value="false">
+                                <Setter TargetName="dropDownBorder" Property="MinHeight" Value="40" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="false">
+                                <Setter Property="Opacity" Value="0.5" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- Hierarchical Data Template for TreeView -->
         <HierarchicalDataTemplate DataType="{x:Type models:FileDiffNodeViewModel}" ItemsSource="{Binding Children}">
             <Grid Margin="2,3" VerticalAlignment="Center">
@@ -314,6 +503,7 @@
                 </Border>
 
                 <Button Command="{Binding OpenProcessModalCommand}" Style="{StaticResource ModernButton}" 
+                        ToolTip="Open real-time internal process monitor and diagnostic terminal"
                         Padding="12,6" Margin="10,0,0,0">
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                         <TextBlock Text="📊 View Process Modal / Logs" FontWeight="SemiBold" FontSize="12" Foreground="{StaticResource AccentBlue}" />
@@ -421,11 +611,18 @@
                         </Grid.ColumnDefinitions>
                         <ComboBox Grid.Column="0" ItemsSource="{Binding Devices}" 
                                   SelectedItem="{Binding SelectedDevice}"
-                                  DisplayMemberPath="DisplayName"
-                                  Background="#0F172A" Foreground="#F8FAFC" BorderBrush="#334155" Height="34" VerticalContentAlignment="Center" />
+                                  Style="{StaticResource ModernComboBox}"
+                                  ToolTip="Select connected iPhone device or Demo Mode"
+                                  Height="34" VerticalContentAlignment="Center">
+                            <ComboBox.ItemTemplate>
+                                <DataTemplate DataType="{x:Type models:DeviceInfoModel}">
+                                    <TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center" FontSize="12" />
+                                </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                        </ComboBox>
                         <Button Grid.Column="1" Command="{Binding RefreshDevicesCommand}" 
                                 Style="{StaticResource ModernButton}" Content="🔄" 
-                                ToolTip="Refresh connected USB devices" Margin="6,0,0,0" Width="36" Height="34" Padding="0" />
+                                ToolTip="Rescan USB ports for connected iPhone devices" Margin="6,0,0,0" Width="36" Height="34" Padding="0" />
                     </Grid>
                 </StackPanel>
 
@@ -440,11 +637,16 @@
                         </Grid.ColumnDefinitions>
                         <TextBox Grid.Column="0" Text="{Binding DestinationFolder, UpdateSourceTrigger=PropertyChanged}" 
                                  Background="#0F172A" Foreground="#F8FAFC" BorderBrush="#334155" 
+                                 ToolTip="Local folder path on your computer where media files are saved"
                                  Height="34" VerticalContentAlignment="Center" Padding="8,0" FontSize="13" />
                         <Button Grid.Column="1" Command="{Binding BrowseDestinationCommand}" 
-                                Style="{StaticResource ModernButton}" Content="Browse..." Margin="6,0,0,0" Height="34" />
+                                Style="{StaticResource ModernButton}" Content="Browse..." 
+                                ToolTip="Choose backup destination folder on your laptop or external drive"
+                                Margin="6,0,0,0" Height="34" />
                         <Button Grid.Column="2" Command="{Binding OpenDestinationFolderCommand}" 
-                                Style="{StaticResource ModernButton}" Content="📂 Open" Margin="6,0,0,0" Height="34" />
+                                Style="{StaticResource ModernButton}" Content="📂 Open" 
+                                ToolTip="Open destination folder in Windows File Explorer"
+                                Margin="6,0,0,0" Height="34" />
                     </Grid>
                 </StackPanel>
 
@@ -467,6 +669,7 @@
                     <Button Command="{Binding ScanCommand}" 
                             Style="{StaticResource PrimaryButton}" 
                             IsEnabled="{Binding IsScanning, Converter={StaticResource InverseBooleanConverter}}"
+                            ToolTip="Scan iPhone media library, inspect destination directory, and generate backup diff"
                             Height="34" Padding="18,0">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="🔍" Margin="0,0,8,0" />
@@ -522,6 +725,7 @@
                         <Grid Grid.Column="0">
                             <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" 
                                      Background="#0F172A" Foreground="#F8FAFC" BorderBrush="#334155" 
+                                     ToolTip="Filter media files by filename or extension (e.g., .HEIC, .MOV, .JPG)"
                                      Height="30" VerticalContentAlignment="Center" Padding="8,0" FontSize="12" />
                             <TextBlock Text="Search files (.heic, .mov)..." Foreground="{StaticResource TextSecondary}" 
                                        IsHitTestVisible="False" Margin="10,0,0,0" VerticalAlignment="Center" FontSize="12">
@@ -541,20 +745,26 @@
                         <!-- Quick Selection Buttons -->
                         <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="12,0,0,0">
                             <Button Command="{Binding SelectAllPendingCommand}" Style="{StaticResource ModernButton}" 
-                                    Content="Select Pending" Padding="8,4" FontSize="11" Margin="0,0,6,0" />
+                                    Content="Select Pending" ToolTip="Select all new or modified media items waiting for backup" 
+                                    Padding="8,4" FontSize="11" Margin="0,0,6,0" />
                             <Button Command="{Binding SelectAllCommand}" Style="{StaticResource ModernButton}" 
-                                    Content="Select All" Padding="8,4" FontSize="11" Margin="0,0,6,0" />
+                                    Content="Select All" ToolTip="Check all media files across all folders" 
+                                    Padding="8,4" FontSize="11" Margin="0,0,6,0" />
                             <Button Command="{Binding DeselectAllCommand}" Style="{StaticResource ModernButton}" 
-                                    Content="Deselect All" Padding="8,4" FontSize="11" Margin="0,0,6,0" />
+                                    Content="Deselect All" ToolTip="Uncheck all media items" 
+                                    Padding="8,4" FontSize="11" Margin="0,0,6,0" />
                             <Button Command="{Binding ExpandAllCommand}" Style="{StaticResource ModernButton}" 
-                                    Content="Expand" Padding="8,4" FontSize="11" Margin="0,0,6,0" />
+                                    Content="Expand" ToolTip="Expand all folders in the media tree" 
+                                    Padding="8,4" FontSize="11" Margin="0,0,6,0" />
                             <Button Command="{Binding CollapseAllCommand}" Style="{StaticResource ModernButton}" 
-                                    Content="Collapse" Padding="8,4" FontSize="11" />
+                                    Content="Collapse" ToolTip="Collapse all folders in the media tree" 
+                                    Padding="8,4" FontSize="11" />
                         </StackPanel>
 
                         <!-- Filter Tabs -->
                         <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right">
                             <RadioButton Content="All" IsChecked="{Binding FilterMode, Converter={x:Null}}" 
+                                         ToolTip="Show all files in the tree view"
                                          Foreground="#F8FAFC" Margin="0,0,12,0" VerticalAlignment="Center">
                                 <RadioButton.Style>
                                     <Style TargetType="RadioButton">
@@ -567,7 +777,9 @@
                                     </Style>
                                 </RadioButton.Style>
                             </RadioButton>
-                            <RadioButton Content="Pending Only" Foreground="#F59E0B" Margin="0,0,12,0" VerticalAlignment="Center">
+                            <RadioButton Content="Pending Only" Foreground="#F59E0B" 
+                                         ToolTip="Show only files not yet backed up or with size differences"
+                                         Margin="0,0,12,0" VerticalAlignment="Center">
                                 <RadioButton.Style>
                                     <Style TargetType="RadioButton">
                                         <Setter Property="IsChecked" Value="False" />
@@ -579,7 +791,9 @@
                                     </Style>
                                 </RadioButton.Style>
                             </RadioButton>
-                            <RadioButton Content="Backed Up" Foreground="#10B981" VerticalAlignment="Center">
+                            <RadioButton Content="Backed Up" Foreground="#10B981" 
+                                         ToolTip="Show only files that already exist identically in destination folder"
+                                         VerticalAlignment="Center">
                                 <RadioButton.Style>
                                     <Style TargetType="RadioButton">
                                         <Setter Property="IsChecked" Value="False" />
@@ -681,13 +895,17 @@
                         <TextBlock Text="📜 Internal Process Log" FontWeight="SemiBold" FontSize="13" Foreground="#F8FAFC" VerticalAlignment="Center" />
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                             <Button Command="{Binding OpenProcessModalCommand}" 
-                                    Style="{StaticResource ModernButton}" Content="🔍 Modal" Padding="6,2" FontSize="10" Margin="0,0,4,0" ToolTip="Open full process modal" />
+                                    Style="{StaticResource ModernButton}" Content="🔍 Modal" Padding="6,2" FontSize="10" Margin="0,0,4,0" 
+                                    ToolTip="Open real-time internal process monitor and diagnostic terminal" />
                             <Button Command="{Binding CopyLogsCommand}" 
-                                    Style="{StaticResource ModernButton}" Content="📋" Padding="5,2" FontSize="10" Margin="0,0,4,0" ToolTip="Copy logs to clipboard" />
+                                    Style="{StaticResource ModernButton}" Content="📋" Padding="5,2" FontSize="10" Margin="0,0,4,0" 
+                                    ToolTip="Copy all internal process logs to clipboard" />
                             <Button Command="{Binding ClearLogsCommand}" 
-                                    Style="{StaticResource ModernButton}" Content="🧹" Padding="5,2" FontSize="10" Margin="0,0,4,0" ToolTip="Clear logs" />
+                                    Style="{StaticResource ModernButton}" Content="🧹" Padding="5,2" FontSize="10" Margin="0,0,4,0" 
+                                    ToolTip="Clear internal log display" />
                             <Button Command="{Binding OpenStateJsonFolderCommand}" 
-                                    Style="{StaticResource ModernButton}" Content="JSON" Padding="6,2" FontSize="10" ToolTip="Open state JSON folder" />
+                                    Style="{StaticResource ModernButton}" Content="JSON" Padding="6,2" FontSize="10" 
+                                    ToolTip="Open folder containing iphone_state.json and laptop_state.json" />
                         </StackPanel>
                     </Grid>
 
@@ -757,6 +975,7 @@
                         <Button Command="{Binding StartBackupCommand}" 
                                 Style="{StaticResource SuccessButton}" 
                                 IsEnabled="{Binding IsTransferring, Converter={StaticResource InverseBooleanConverter}}"
+                                ToolTip="Start copying selected iPhone media files to destination folder (automatically scans first if needed)"
                                 Padding="20,8" Margin="0,0,10,0">
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock Text="▶ Start Backup" FontSize="13" FontWeight="Bold" />
@@ -766,6 +985,7 @@
                         <Button Command="{Binding PauseResumeCommand}" 
                                 Style="{StaticResource ModernButton}" 
                                 IsEnabled="{Binding IsTransferring}"
+                                ToolTip="Temporarily pause or resume active file transfer streams"
                                 Padding="14,8" Margin="0,0,10,0">
                             <TextBlock Text="{Binding IsPaused, Converter={x:Null}}">
                                 <TextBlock.Style>
@@ -784,6 +1004,7 @@
                         <Button Command="{Binding CancelBackupCommand}" 
                                 Style="{StaticResource DangerButton}" 
                                 IsEnabled="{Binding IsTransferring}"
+                                ToolTip="Safely stop current backup transfer"
                                 Content="⏹ Cancel" Padding="14,8" />
                     </StackPanel>
 
@@ -906,7 +1127,9 @@
                         </StackPanel>
 
                         <Button Grid.Column="1" Command="{Binding CloseProcessModalCommand}" 
-                                Style="{StaticResource ModernButton}" Content="✕ Minimize" Padding="14,6" FontSize="12" />
+                                Style="{StaticResource ModernButton}" Content="✕ Minimize" 
+                                ToolTip="Minimize modal back to main view (active operation continues in background)"
+                                Padding="14,6" FontSize="12" />
                     </Grid>
 
                     <!-- Active Operation Status Card -->
@@ -1000,27 +1223,33 @@
                     <Grid Grid.Row="3">
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
                             <Button Command="{Binding CopyLogsCommand}" Style="{StaticResource ModernButton}" 
-                                    Content="📋 Copy Logs" Padding="12,6" FontSize="12" Margin="0,0,8,0" />
+                                    Content="📋 Copy Logs" ToolTip="Copy all internal process logs to clipboard"
+                                    Padding="12,6" FontSize="12" Margin="0,0,8,0" />
                             <Button Command="{Binding ClearLogsCommand}" Style="{StaticResource ModernButton}" 
-                                    Content="🧹 Clear" Padding="12,6" FontSize="12" Margin="0,0,8,0" />
+                                    Content="🧹 Clear" ToolTip="Clear internal log display"
+                                    Padding="12,6" FontSize="12" Margin="0,0,8,0" />
                             <Button Command="{Binding OpenStateJsonFolderCommand}" Style="{StaticResource ModernButton}" 
-                                    Content="📂 Open State JSONs" Padding="12,6" FontSize="12" />
+                                    Content="📂 Open State JSONs" ToolTip="Open folder containing iphone_state.json and laptop_state.json"
+                                    Padding="12,6" FontSize="12" />
                         </StackPanel>
 
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                             <!-- Cancel Scan button if scanning -->
                             <Button Command="{Binding CancelScanCommand}" Style="{StaticResource DangerButton}" 
-                                    Content="⏹ Cancel Scan" Padding="14,6" FontSize="12" Margin="0,0,10,0"
+                                    Content="⏹ Cancel Scan" ToolTip="Cancel the ongoing iPhone media scan"
+                                    Padding="14,6" FontSize="12" Margin="0,0,10,0"
                                     Visibility="{Binding IsScanning, Converter={StaticResource BoolToVisConverter}}" />
 
                             <!-- Cancel Backup button if transferring -->
                             <Button Command="{Binding CancelBackupCommand}" Style="{StaticResource DangerButton}" 
-                                    Content="⏹ Cancel Backup" Padding="14,6" FontSize="12" Margin="0,0,10,0"
+                                    Content="⏹ Cancel Backup" ToolTip="Safely stop current backup transfer"
+                                    Padding="14,6" FontSize="12" Margin="0,0,10,0"
                                     Visibility="{Binding IsTransferring, Converter={StaticResource BoolToVisConverter}}" />
 
                             <!-- Minimize / Close button -->
                             <Button Command="{Binding CloseProcessModalCommand}" Style="{StaticResource PrimaryButton}" 
-                                    Content="Minimize to Background" Padding="16,6" FontSize="12" />
+                                    Content="Minimize to Background" ToolTip="Return to main view while current process continues running"
+                                    Padding="16,6" FontSize="12" />
                         </StackPanel>
                     </Grid>
                 </Grid>

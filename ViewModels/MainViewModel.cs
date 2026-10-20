@@ -22,6 +22,7 @@ public partial class MainViewModel : ObservableObject
 
     private CancellationTokenSource? _scanCts;
     private CancellationTokenSource? _transferCts;
+    private readonly object _logLock = new();
 
     [ObservableProperty]
     private ObservableCollection<DeviceInfoModel> _devices = new();
@@ -687,8 +688,11 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public void ClearLogs()
     {
-        ProcessLogs.Clear();
-        ActivityLogs.Clear();
+        lock (_logLock)
+        {
+            ProcessLogs.Clear();
+            ActivityLogs.Clear();
+        }
         Log("Diagnostic logs cleared.", LogLevel.Info, "SYSTEM");
     }
 
@@ -697,7 +701,11 @@ public partial class MainViewModel : ObservableObject
     {
         try
         {
-            var text = string.Join(Environment.NewLine, ProcessLogs.Select(l => l.FullText));
+            string text;
+            lock (_logLock)
+            {
+                text = string.Join(Environment.NewLine, ProcessLogs.Select(l => l.FullText));
+            }
             Clipboard.SetText(text);
             Log("Logs copied to clipboard.", LogLevel.Success, "SYSTEM");
         }
@@ -715,10 +723,13 @@ public partial class MainViewModel : ObservableObject
 
         void Append()
         {
-            ProcessLogs.Add(entry);
-            ActivityLogs.Insert(0, entry.ToString());
-            if (ActivityLogs.Count > 300) ActivityLogs.RemoveAt(ActivityLogs.Count - 1);
-            if (ProcessLogs.Count > 1500) ProcessLogs.RemoveAt(0);
+            lock (_logLock)
+            {
+                ProcessLogs.Add(entry);
+                ActivityLogs.Insert(0, entry.ToString());
+                if (ActivityLogs.Count > 300) ActivityLogs.RemoveAt(ActivityLogs.Count - 1);
+                if (ProcessLogs.Count > 1500) ProcessLogs.RemoveAt(0);
+            }
         }
 
         if (Application.Current?.Dispatcher != null && !Application.Current.Dispatcher.CheckAccess())
