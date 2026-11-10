@@ -519,6 +519,135 @@ public class DeviceService : IDeviceService
         File.SetLastWriteTime(destPath, DateTime.Now.AddDays(-10));
     }
 
+    public async Task UploadFileAsync(
+        string deviceId,
+        string localFilePath,
+        string targetMtpDirectory,
+        IProgress<long>? byteProgress,
+        CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        if (!File.Exists(localFilePath))
+        {
+            throw new FileNotFoundException("Local file for restore not found.", localFilePath);
+        }
+
+        if (deviceId == SimulatedDeviceId)
+        {
+            await UploadSimulatedFileAsync(localFilePath, targetMtpDirectory, byteProgress, ct);
+            return;
+        }
+
+        await Task.Run(() =>
+        {
+            var device = (MediaDeviceManager.Instance.GetDevices() ?? Enumerable.Empty<MediaDevice>()).FirstOrDefault(d => d.DeviceId == deviceId);
+            if (device == null)
+            {
+                throw new InvalidOperationException("Selected iPhone was not found or is disconnected.");
+            }
+
+            bool wasConnected = device.IsConnected;
+            try
+            {
+                if (!wasConnected) device.Connect();
+
+                string targetDir = ResolveDeviceUploadDirectory(device, targetMtpDirectory);
+                string fileName = Path.GetFileName(localFilePath);
+                string targetDeviceFilePath = Path.Combine(targetDir, fileName).Replace('/', '\\');
+
+                using var fileStream = new FileStream(localFilePath, FileMode.Open, FileAccess.Read, FileShare.Read, 65536, useAsync: true);
+                using var progressStream = new ProgressReportingStream(fileStream, byteProgress, ct);
+
+                try
+                {
+                    device.UploadFile(progressStream, targetDeviceFilePath);
+                }
+                catch (Exception ex)
+                {
+                    try
+                    {
+                        device.UploadFile(localFilePath, targetDeviceFilePath);
+                    }
+                    catch (Exception ex2)
+                    {
+                        if (ex.Message.Contains("0x80070032") || ex2.Message.Contains("0x80070032"))
+                        {
+                            throw new NotSupportedException(
+                                $"Apple iOS restricts direct USB cable writes to the Camera Roll over MTP (Error 0x80070032). Please use the Wi-Fi Restore or Sync Folder feature in the Restore Assistant.");
+                        }
+
+                        throw new InvalidOperationException(
+                            $"Could not restore '{fileName}' to iPhone ({ex2.Message}). Apple iOS may restrict direct MTP write access to Camera Roll. Please ensure your iPhone is unlocked with your passcode and 'Trust This Computer' is accepted.", ex2);
+                    }
+                }
+            }
+            finally
+            {
+                if (!wasConnected && device.IsConnected)
+                {
+                    device.Disconnect();
+                }
+            }
+        }, ct);
+    }
+
+    private static async Task UploadSimulatedFileAsync(
+        string localFilePath,
+        string targetMtpDirectory,
+        IProgress<long>? byteProgress,
+        CancellationToken ct)
+    {
+        var fi = new FileInfo(localFilePath);
+        long fileSize = fi.Exists ? fi.Length : 3_000_000;
+
+        byte[] buffer = new byte[65536];
+        using var fs = File.Exists(localFilePath) 
+            ? new FileStream(localFilePath, FileMode.Open, FileAccess.Read, FileShare.Read, 65536, useAsync: true)
+            : null;
+
+        long written = 0;
+        while (written < fileSize)
+        {
+            ct.ThrowIfCancellationRequested();
+            int toRead = (int)Math.Min(buffer.Length, fileSize - written);
+            if (fs != null)
+            {
+                await fs.ReadAsync(buffer.AsMemory(0, toRead), ct);
+            }
+            written += toRead;
+            byteProgress?.Report(written);
+            await Task.Yield();
+        }
+    }
+
+    private string ResolveDeviceUploadDirectory(MediaDevice device, string preferredFolder)
+    {
+        try
+        {
+            var roots = FindMediaFolderRoots(device);
+            if (roots.Count > 0)
+            {
+                var match = roots.FirstOrDefault(r => string.Equals(r.FolderName, preferredFolder, StringComparison.OrdinalIgnoreCase));
+                if (match.MtpPath != null) return match.MtpPath;
+                return roots[0].MtpPath;
+            }
+
+            var drives = device.GetDrives() ?? Enumerable.Empty<MediaDriveInfo>();
+            foreach (var drive in drives)
+            {
+                if (drive.RootDirectory != null)
+                {
+                    string candidate = Path.Combine(drive.RootDirectory.FullName, "DCIM", preferredFolder).Replace('/', '\\');
+                    return candidate;
+                }
+            }
+        }
+        catch { }
+
+        return @"\DCIM\100APPLE";
+    }
+
     private DeviceState GenerateSimulatedIPhoneState(IProgress<string>? progress, CancellationToken ct)
     {
         progress?.Report("Scanning simulated iPhone DCIM directory...");
@@ -636,7 +765,32 @@ public class ProgressReportingStream : Stream
     }
 
     public override void Flush() => _baseStream.Flush();
-    public override int Read(byte[] buffer, int offset, int count) => _baseStream.Read(buffer, offset, count);
+
+    public override int Read(byte[] buffer, int offset, int count)
+    {
+        _ct.ThrowIfCancellationRequested();
+        int read = _baseStream.Read(buffer, offset, count);
+        if (read > 0)
+        {
+            _totalWritten += read;
+            _progress?.Report(_totalWritten);
+        }
+        return read;
+    }
+
+    public override async Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+    {
+        _ct.ThrowIfCancellationRequested();
+        cancellationToken.ThrowIfCancellationRequested();
+        int read = await _baseStream.ReadAsync(buffer.AsMemory(offset, count), cancellationToken);
+        if (read > 0)
+        {
+            _totalWritten += read;
+            _progress?.Report(_totalWritten);
+        }
+        return read;
+    }
+
     public override long Seek(long offset, SeekOrigin origin) => _baseStream.Seek(offset, origin);
     public override void SetLength(long value) => _baseStream.SetLength(value);
 

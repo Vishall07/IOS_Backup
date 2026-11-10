@@ -1,8 +1,13 @@
 using System;
 using System.ComponentModel;
+using System.Diagnostics;
+using System.IO;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Threading;
+using IosBackupApp.Models;
 using IosBackupApp.Services;
 using IosBackupApp.ViewModels;
 
@@ -32,8 +37,10 @@ public partial class MainWindow : Window
         _videoTimer.Tick += VideoTimer_Tick;
 
         PreviewKeyDown += MainWindow_PreviewKeyDown;
+        StateChanged += MainWindow_StateChanged;
         LightboxMediaPlayer.MediaOpened += LightboxMediaPlayer_MediaOpened;
         LightboxMediaPlayer.MediaEnded += LightboxMediaPlayer_MediaEnded;
+        LightboxMediaPlayer.MediaFailed += LightboxMediaPlayer_MediaFailed;
         ViewModel.PropertyChanged += ViewModel_PropertyChanged;
 
         ViewModel.ProcessLogs.CollectionChanged += (s, e) =>
@@ -70,6 +77,7 @@ public partial class MainWindow : Window
         {
             Dispatcher.InvokeAsync(() =>
             {
+                VideoCodecFallbackOverlay.Visibility = Visibility.Collapsed;
                 if (!string.IsNullOrEmpty(ViewModel.ActiveVideoUri))
                 {
                     LightboxMediaPlayer.Source = new Uri(ViewModel.ActiveVideoUri, UriKind.Absolute);
@@ -93,7 +101,20 @@ public partial class MainWindow : Window
                 _videoTimer.Stop();
                 LightboxMediaPlayer.Stop();
                 LightboxMediaPlayer.Source = null;
+                VideoCodecFallbackOverlay.Visibility = Visibility.Collapsed;
             }
+        }
+        else if (e.PropertyName == nameof(MainViewModel.IsGalleryView))
+        {
+            Dispatcher.InvokeAsync(() =>
+            {
+                if (ViewModel.IsGalleryView)
+                {
+                    // Full size preview mode window
+                    WindowState = WindowState.Maximized;
+                }
+                UpdateMaximizeButtonText();
+            });
         }
     }
 
@@ -186,6 +207,13 @@ public partial class MainWindow : Window
 
     private void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        if (e.Key == Key.F11)
+        {
+            ToggleMaximize();
+            e.Handled = true;
+            return;
+        }
+
         if (ViewModel.IsLightboxOpen)
         {
             if (e.Key == Key.Escape)
@@ -217,5 +245,80 @@ public partial class MainWindow : Window
                 }
             }
         }
+    }
+
+    private void LightboxMediaPlayer_MediaFailed(object? sender, ExceptionRoutedEventArgs e)
+    {
+        _videoTimer.Stop();
+        VideoCodecFallbackOverlay.Visibility = Visibility.Visible;
+        ViewModel.Log($"[VIDEO] Native playback failed: {e.ErrorException?.Message ?? "Codec not supported by Windows Media Foundation"}. File: {ViewModel.ActiveVideoUri}", LogLevel.Warning, "VIDEO");
+    }
+
+    private void OpenInDefaultPlayerBtn_Click(object sender, RoutedEventArgs e)
+    {
+        if (!string.IsNullOrEmpty(ViewModel.ActiveVideoUri) && File.Exists(ViewModel.ActiveVideoUri))
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = ViewModel.ActiveVideoUri,
+                    UseShellExecute = true
+                });
+            }
+            catch (Exception ex)
+            {
+                ViewModel.Log($"Failed to open video in external player: {ex.Message}", LogLevel.Error, "VIDEO");
+            }
+        }
+    }
+
+    private void GalleryCard_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        // If the click was directly on or inside a CheckBox, don't open the lightbox
+        if (e.OriginalSource is DependencyObject dep && FindVisualParent<CheckBox>(dep) != null)
+        {
+            return;
+        }
+
+        if (sender is FrameworkElement fe && fe.DataContext is GalleryItemViewModel item)
+        {
+            ViewModel.OpenGalleryItemCommand.Execute(item);
+            e.Handled = true;
+        }
+    }
+
+    private static T? FindVisualParent<T>(DependencyObject? child) where T : DependencyObject
+    {
+        DependencyObject? parentObject = child;
+        while (parentObject != null)
+        {
+            if (parentObject is T parent) return parent;
+            parentObject = VisualTreeHelper.GetParent(parentObject);
+        }
+        return null;
+    }
+
+    private void MainWindow_StateChanged(object? sender, EventArgs e)
+    {
+        UpdateMaximizeButtonText();
+    }
+
+    private void UpdateMaximizeButtonText()
+    {
+        string text = WindowState == WindowState.Maximized ? "🗗 Normal Window" : "⛶ Fullscreen";
+        if (GalleryMaximizeBtnText != null) GalleryMaximizeBtnText.Text = text;
+        if (LightboxMaximizeBtn != null) LightboxMaximizeBtn.Content = text;
+    }
+
+    private void ToggleMaximizeBtn_Click(object sender, RoutedEventArgs e)
+    {
+        ToggleMaximize();
+    }
+
+    public void ToggleMaximize()
+    {
+        WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+        UpdateMaximizeButtonText();
     }
 }

@@ -14,6 +14,7 @@ public interface IDeviceService
     Task<(long totalBytes, long freeBytes)> GetStorageMetricsAsync(string deviceId);
     Task<DeviceState> ScanDeviceAsync(string deviceId, IProgress<string>? progress, CancellationToken ct);
     Task CopyFileAsync(string deviceId, string sourcePath, string destPath, IProgress<long>? byteProgress, CancellationToken ct);
+    Task UploadFileAsync(string deviceId, string localFilePath, string targetMtpDirectory, IProgress<long>? byteProgress, CancellationToken ct);
     void StartMonitoring();
     void StopMonitoring();
 }

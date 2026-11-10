@@ -59,6 +59,13 @@ public partial class GalleryItemViewModel : ObservableObject
     [ObservableProperty]
     private bool _isSelected;
 
+    public event EventHandler? SelectionChanged;
+
+    partial void OnIsSelectedChanged(bool value)
+    {
+        SelectionChanged?.Invoke(this, EventArgs.Empty);
+    }
+
     [ObservableProperty]
     private string _durationFormatted = string.Empty;
 

@@ -655,6 +655,295 @@ public class AppTests
         Assert.False(vm.IsLightboxOpen);
         Assert.Null(vm.SelectedGalleryItem);
     }
+
+    [Fact]
+    public void Gallery_LazyLoadsBatchesOfThirtyAndLoadsMore()
+    {
+        var deviceService = new DeviceService();
+        var localStorage = new LocalStorageService();
+        var diffEngine = new DiffEngine();
+        var transferEngine = new TransferEngine(deviceService, localStorage);
+
+        var vm = new ViewModels.MainViewModel(deviceService, localStorage, diffEngine, transferEngine);
+
+        // Generate 75 test gallery items
+        for (int i = 1; i <= 75; i++)
+        {
+            vm.GalleryItems.Add(new GalleryItemViewModel
+            {
+                FileName = $"IMG_{i:D4}.JPG",
+                FilePath = $@"C:\FakeBackup\DCIM\100APPLE\IMG_{i:D4}.JPG",
+                Folder = "100APPLE",
+                FileSize = 2_000_000,
+                DateModified = DateTime.Now.AddMinutes(-i),
+                MediaType = GalleryMediaType.Photo
+            });
+        }
+
+        // Apply filter to initialize lazy loading
+        vm.ApplyGalleryFilter();
+
+        // 1. Initial batch must be exactly 30 items
+        Assert.Equal(75, vm.FilteredGalleryItems.Count);
+        Assert.Equal(30, vm.DisplayedGalleryItems.Count);
+        Assert.True(vm.HasMoreGalleryItems);
+        Assert.Equal("Showing 30 of 75 items", vm.GalleryDisplayCounter);
+
+        // 2. Load more should append next 30 items (total 60)
+        vm.LoadMoreGalleryItems();
+        Assert.Equal(60, vm.DisplayedGalleryItems.Count);
+        Assert.True(vm.HasMoreGalleryItems);
+        Assert.Equal("Showing 60 of 75 items", vm.GalleryDisplayCounter);
+
+        // 3. Load remaining items (total 75)
+        vm.LoadMoreGalleryItems();
+        Assert.Equal(75, vm.DisplayedGalleryItems.Count);
+        Assert.False(vm.HasMoreGalleryItems);
+        Assert.Equal("Showing 75 of 75 items", vm.GalleryDisplayCounter);
+
+        // 4. Calling load more when exhausted does nothing
+        vm.LoadMoreGalleryItems();
+        Assert.Equal(75, vm.DisplayedGalleryItems.Count);
+        Assert.False(vm.HasMoreGalleryItems);
+    }
+
+    [Fact]
+    public void Gallery_SelectionAndTopBarStats_WorkCorrectly()
+    {
+        var deviceService = new DeviceService();
+        var localStorage = new LocalStorageService();
+        var diffEngine = new DiffEngine();
+        var transferEngine = new TransferEngine(deviceService, localStorage);
+
+        var vm = new ViewModels.MainViewModel(deviceService, localStorage, diffEngine, transferEngine);
+
+        // Generate 10 test items
+        for (int i = 1; i <= 10; i++)
+        {
+            var item = new GalleryItemViewModel
+            {
+                FileName = $"IMG_{i:D4}.HEIC",
+                FilePath = $@"C:\FakeBackup\DCIM\100APPLE\IMG_{i:D4}.HEIC",
+                FileSize = 1_000_000, // 1 MB each
+                MediaType = GalleryMediaType.Photo
+            };
+            vm.GalleryItems.Add(item);
+        }
+
+        vm.ApplyGalleryFilter();
+
+        Assert.False(vm.HasSelectedGalleryItems);
+        Assert.Equal(0, vm.SelectedGalleryCount);
+        Assert.Equal(0, vm.SelectedGalleryBytes);
+
+        // 1. Select first two items
+        vm.DisplayedGalleryItems[0].IsSelected = true;
+        vm.DisplayedGalleryItems[1].IsSelected = true;
+
+        Assert.True(vm.HasSelectedGalleryItems);
+        Assert.Equal(2, vm.SelectedGalleryCount);
+        Assert.Equal(2_000_000, vm.SelectedGalleryBytes);
+        Assert.Contains("Restore 2 items", vm.RestoreButtonText);
+
+        // 2. Deselect all
+        vm.DeselectAllGallery();
+        Assert.False(vm.HasSelectedGalleryItems);
+        Assert.Equal(0, vm.SelectedGalleryCount);
+        Assert.All(vm.DisplayedGalleryItems, item => Assert.False(item.IsSelected));
+
+        // 3. Select all displayed
+        vm.SelectAllDisplayedGallery();
+        Assert.True(vm.HasSelectedGalleryItems);
+        Assert.Equal(10, vm.SelectedGalleryCount);
+        Assert.Equal(10_000_000, vm.SelectedGalleryBytes);
+        Assert.All(vm.DisplayedGalleryItems, item => Assert.True(item.IsSelected));
+    }
+
+    [Fact]
+    public async Task Gallery_RestoreToiPhone_UploadsFilesAndLivePhotoCompanions()
+    {
+        var deviceService = new DeviceService();
+        var localStorage = new LocalStorageService();
+        var diffEngine = new DiffEngine();
+        var transferEngine = new TransferEngine(deviceService, localStorage);
+
+        var vm = new ViewModels.MainViewModel(deviceService, localStorage, diffEngine, transferEngine);
+
+        // Initialize simulated device
+        await vm.InitializeAsync();
+        var simDev = vm.Devices.FirstOrDefault(d => d.Id == DeviceService.SimulatedDeviceId);
+        if (simDev != null)
+        {
+            vm.SelectedDevice = simDev;
+        }
+        Assert.NotNull(vm.SelectedDevice);
+
+        // Create temporary real files on disk to test upload
+        string tempDir = Path.Combine(Path.GetTempPath(), "IosBackupRestoreTest_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            string photoPath = Path.Combine(tempDir, "IMG_9999.HEIC");
+            string companionPath = Path.Combine(tempDir, "IMG_9999.MOV");
+            File.WriteAllBytes(photoPath, new byte[2048]);
+            File.WriteAllBytes(companionPath, new byte[4096]);
+
+            var livePhotoItem = new GalleryItemViewModel
+            {
+                FileName = "IMG_9999.HEIC",
+                FilePath = photoPath,
+                Folder = "100APPLE",
+                FileSize = 6144,
+                MediaType = GalleryMediaType.LivePhoto,
+                IsLivePhoto = true,
+                CompanionVideoPath = companionPath,
+                IsSelected = true
+            };
+
+            vm.GalleryItems.Add(livePhotoItem);
+            vm.ApplyGalleryFilter();
+
+            // Set as selected
+            livePhotoItem.IsSelected = true;
+            Assert.True(vm.HasSelectedGalleryItems);
+            Assert.Equal(1, vm.SelectedGalleryCount);
+
+            // Trigger Restore
+            await vm.RestoreSelectedToIphoneAsync();
+
+            // Assert restoration succeeded and item deselected
+            Assert.False(livePhotoItem.IsSelected);
+            Assert.False(vm.HasSelectedGalleryItems);
+            Assert.False(vm.IsRestoring);
+            Assert.Contains("complete", vm.RestoreStatusMessage, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                try { Directory.Delete(tempDir, true); } catch { }
+            }
+        }
+    }
+
+    [Fact]
+    public async Task WifiRestoreService_StartsAndServesHttpRequests()
+    {
+        using var service = new WifiRestoreService();
+        string tempFile = Path.GetTempFileName();
+        await File.WriteAllTextAsync(tempFile, "HEIC_TEST_PAYLOAD");
+
+        try
+        {
+            var item = new GalleryItemViewModel
+            {
+                FileName = "TEST_PIC.HEIC",
+                FilePath = tempFile,
+                FileSize = 17,
+                MediaType = GalleryMediaType.Photo
+            };
+
+            service.Start(new[] { item }, requestedPort: 5077);
+            Assert.True(service.IsRunning);
+            Assert.NotEmpty(service.RestoreUrl);
+
+            using var http = new System.Net.Http.HttpClient();
+
+            // 1. Check Index HTML
+            var indexResp = await http.GetAsync(service.RestoreUrl);
+            Assert.True(indexResp.IsSuccessStatusCode);
+            string html = await indexResp.Content.ReadAsStringAsync();
+            Assert.Contains("iPhone Restore", html);
+            Assert.Contains("TEST_PIC.HEIC", html);
+
+            // 2. Check File Download
+            var fileResp = await http.GetAsync($"{service.RestoreUrl}file/0");
+            Assert.True(fileResp.IsSuccessStatusCode);
+            string fileContent = await fileResp.Content.ReadAsStringAsync();
+            Assert.Equal("HEIC_TEST_PAYLOAD", fileContent);
+
+            // 3. Stop cleanly
+            service.Stop();
+            Assert.False(service.IsRunning);
+        }
+        finally
+        {
+            try { File.Delete(tempFile); } catch { }
+        }
+    }
+
+    [Fact]
+    public async Task Restore_RealDevice_OpensRestoreModalAndAllowsExport()
+    {
+        var deviceService = new DeviceService();
+        var localStorage = new LocalStorageService();
+        var diffEngine = new DiffEngine();
+        var transferEngine = new TransferEngine(deviceService, localStorage);
+
+        string tempDir = Path.Combine(Path.GetTempPath(), "IosBackupExportTest_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            var vm = new ViewModels.MainViewModel(deviceService, localStorage, diffEngine, transferEngine)
+            {
+                DestinationFolder = tempDir
+            };
+            deviceService.StopMonitoring();
+
+            var physicalDevice = new DeviceInfoModel
+            {
+                Id = "USB#VID_05AC&PID_12A8#PHYSICAL_IPHONE_15_PRO",
+                Name = "Vishal's iPhone 15 Pro",
+                Manufacturer = "Apple Inc."
+            };
+            vm.Devices.Clear();
+            vm.Devices.Add(physicalDevice);
+            vm.SelectedDevice = physicalDevice;
+
+            string testPic = Path.Combine(tempDir, "PHOTO_01.JPG");
+            await File.WriteAllTextAsync(testPic, "DUMMY_IMAGE_BYTES");
+
+            var galleryItem = new GalleryItemViewModel
+            {
+                FileName = "PHOTO_01.JPG",
+                FilePath = testPic,
+                FileSize = 18,
+                IsSelected = true
+            };
+
+            vm.GalleryItems.Add(galleryItem);
+            vm.ApplyGalleryFilter();
+            galleryItem.IsSelected = true;
+
+            // Trigger Restore: on physical device, must open Restore Assistant modal instead of failing via MTP
+            await vm.RestoreSelectedToIphoneAsync();
+
+            string allLogs = string.Join("\n", vm.ProcessLogs.Select(l => l.Message));
+            Assert.True(vm.IsRestoreModalOpen, $"Logs: {allLogs}");
+            Assert.True(vm.IsWifiRestoreRunning);
+            Assert.NotEmpty(vm.WifiRestoreUrl);
+
+            // Test Export to Sync Folder
+            await vm.ExportToSyncFolderAsync();
+            string expectedExportDir = Path.Combine(tempDir, "iPhone_Restore_Export");
+            Assert.True(Directory.Exists(expectedExportDir));
+            Assert.True(File.Exists(Path.Combine(expectedExportDir, "PHOTO_01.JPG")));
+
+            // Close modal
+            vm.CloseRestoreModal();
+            Assert.False(vm.IsRestoreModalOpen);
+            Assert.False(vm.IsWifiRestoreRunning);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                try { Directory.Delete(tempDir, true); } catch { }
+            }
+        }
+    }
 }
 
 

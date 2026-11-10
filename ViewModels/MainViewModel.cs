@@ -119,10 +119,25 @@ public partial class MainViewModel : ObservableObject
     private ObservableCollection<GalleryItemViewModel> _filteredGalleryItems = new();
 
     [ObservableProperty]
+    private ObservableCollection<GalleryItemViewModel> _displayedGalleryItems = new();
+
+    [ObservableProperty]
     private string _galleryFilter = "All"; // "All", "Photos", "Videos", "LivePhotos"
 
     [ObservableProperty]
     private string _gallerySearchText = string.Empty;
+
+    [ObservableProperty]
+    private int _galleryPageSize = 30;
+
+    [ObservableProperty]
+    private int _displayedGalleryCount = 30;
+
+    [ObservableProperty]
+    private bool _hasMoreGalleryItems;
+
+    [ObservableProperty]
+    private string _galleryDisplayCounter = string.Empty;
 
     [ObservableProperty]
     private int _galleryCardSize = 160;
@@ -138,6 +153,46 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     private int _galleryTotalLivePhotos;
+
+    [ObservableProperty]
+    private int _selectedGalleryCount;
+
+    [ObservableProperty]
+    private long _selectedGalleryBytes;
+
+    [ObservableProperty]
+    private bool _hasSelectedGalleryItems;
+
+    [ObservableProperty]
+    private string _selectedGallerySizeFormatted = "0 B";
+
+    [ObservableProperty]
+    private bool _isRestoring;
+
+    [ObservableProperty]
+    private double _restoreProgressPercent;
+
+    [ObservableProperty]
+    private string _restoreStatusMessage = string.Empty;
+
+    [ObservableProperty]
+    private string _restoreButtonText = "📱 Restore to iPhone";
+
+    [ObservableProperty]
+    private bool _isRestoreModalOpen;
+
+    [ObservableProperty]
+    private string _wifiRestoreUrl = string.Empty;
+
+    [ObservableProperty]
+    private bool _isWifiRestoreRunning;
+
+    [ObservableProperty]
+    private string _restoreModalStatusMessage = string.Empty;
+
+    private readonly WifiRestoreService _wifiRestoreService = new();
+
+    private CancellationTokenSource? _restoreCts;
 
     [ObservableProperty]
     private bool _isLightboxOpen;
@@ -189,7 +244,6 @@ public partial class MainViewModel : ObservableObject
         DestinationFolder = Path.Combine(picturesDir, "iPhone_Backup");
 
         _deviceService.DevicesChanged += OnDevicesChanged;
-        _deviceService.StartMonitoring();
 
         Log("iPhone Media Backup Application initialized.");
     }
@@ -199,6 +253,7 @@ public partial class MainViewModel : ObservableObject
     {
         UpdateLaptopStorageMetrics();
         await RefreshDevicesAsync();
+        _deviceService.StartMonitoring();
     }
 
     private void OnDevicesChanged(object? sender, EventArgs e)
@@ -224,6 +279,7 @@ public partial class MainViewModel : ObservableObject
     {
         try
         {
+            var previousSelected = SelectedDevice;
             var previousSelectedId = SelectedDevice?.Id;
             var list = await _deviceService.GetAvailableDevicesAsync();
 
@@ -238,7 +294,19 @@ public partial class MainViewModel : ObservableObject
                 SelectedDevice = Devices.FirstOrDefault(d => d.Id == previousSelectedId);
             }
 
-            SelectedDevice ??= Devices.FirstOrDefault();
+            if (SelectedDevice == null && previousSelected != null)
+            {
+                SelectedDevice = previousSelected;
+                if (!Devices.Contains(previousSelected))
+                {
+                    Devices.Add(previousSelected);
+                }
+            }
+            else
+            {
+                SelectedDevice ??= Devices.FirstOrDefault();
+            }
+
             await OnSelectedDeviceChangedAsync();
         }
         catch (Exception ex)
@@ -960,9 +1028,15 @@ public partial class MainViewModel : ObservableObject
 
             var items = await Task.Run(() => ScanDirectoryForGallery(scanDir, ct), ct);
 
+            foreach (var old in GalleryItems)
+            {
+                old.SelectionChanged -= OnGalleryItemSelectionChanged;
+            }
+
             GalleryItems.Clear();
             foreach (var item in items)
             {
+                item.SelectionChanged += OnGalleryItemSelectionChanged;
                 GalleryItems.Add(item);
             }
 
@@ -972,8 +1046,6 @@ public partial class MainViewModel : ObservableObject
 
             ApplyGalleryFilter();
             Log($"Gallery loaded {GalleryItems.Count} items ({GalleryTotalPhotos} photos, {GalleryTotalLivePhotos} live photos, {GalleryTotalVideos} videos).", LogLevel.Success, "GALLERY");
-
-            StartLazyThumbnailLoading();
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -1086,6 +1158,12 @@ public partial class MainViewModel : ObservableObject
 
     public void ApplyGalleryFilter()
     {
+        foreach (var item in GalleryItems)
+        {
+            item.SelectionChanged -= OnGalleryItemSelectionChanged;
+            item.SelectionChanged += OnGalleryItemSelectionChanged;
+        }
+
         var query = GalleryItems.AsEnumerable();
 
         // 1. Media Type Filter
@@ -1110,12 +1188,54 @@ public partial class MainViewModel : ObservableObject
         {
             FilteredGalleryItems.Add(item);
         }
+
+        // Lazy load initial page of 30 items
+        DisplayedGalleryItems.Clear();
+        DisplayedGalleryCount = Math.Min(GalleryPageSize, FilteredGalleryItems.Count);
+        foreach (var item in FilteredGalleryItems.Take(GalleryPageSize))
+        {
+            DisplayedGalleryItems.Add(item);
+        }
+
+        HasMoreGalleryItems = FilteredGalleryItems.Count > DisplayedGalleryItems.Count;
+        GalleryDisplayCounter = $"Showing {DisplayedGalleryItems.Count} of {FilteredGalleryItems.Count} items";
+
+        UpdateGallerySelectionStats();
+        StartLazyThumbnailLoading();
+    }
+
+    [RelayCommand]
+    public void LoadMoreGalleryItems()
+    {
+        if (DisplayedGalleryItems.Count >= FilteredGalleryItems.Count)
+        {
+            HasMoreGalleryItems = false;
+            return;
+        }
+
+        int currentCount = DisplayedGalleryItems.Count;
+        var nextBatch = FilteredGalleryItems.Skip(currentCount).Take(GalleryPageSize).ToList();
+        foreach (var item in nextBatch)
+        {
+            DisplayedGalleryItems.Add(item);
+        }
+
+        DisplayedGalleryCount = DisplayedGalleryItems.Count;
+        HasMoreGalleryItems = FilteredGalleryItems.Count > DisplayedGalleryItems.Count;
+        GalleryDisplayCounter = $"Showing {DisplayedGalleryItems.Count} of {FilteredGalleryItems.Count} items";
+
+        StartLazyThumbnailLoadingForBatch(nextBatch);
     }
 
     private void StartLazyThumbnailLoading()
     {
+        StartLazyThumbnailLoadingForBatch(DisplayedGalleryItems.ToList());
+    }
+
+    private void StartLazyThumbnailLoadingForBatch(IEnumerable<GalleryItemViewModel> items)
+    {
         var ct = _galleryThumbnailCts?.Token ?? CancellationToken.None;
-        var snapshot = FilteredGalleryItems.ToList();
+        var snapshot = items.ToList();
 
         Task.Run(async () =>
         {
@@ -1149,6 +1269,297 @@ public partial class MainViewModel : ObservableObject
         }, ct);
     }
 
+    private void OnGalleryItemSelectionChanged(object? sender, EventArgs e)
+    {
+        UpdateGallerySelectionStats();
+    }
+
+    private void UpdateGallerySelectionStats()
+    {
+        var selected = GalleryItems.Where(i => i.IsSelected).ToList();
+        SelectedGalleryCount = selected.Count;
+        SelectedGalleryBytes = selected.Sum(i => i.FileSize);
+        HasSelectedGalleryItems = SelectedGalleryCount > 0;
+        SelectedGallerySizeFormatted = StorageMetrics.FormatBytes(SelectedGalleryBytes);
+        RestoreButtonText = SelectedGalleryCount == 1
+            ? $"📱 Restore 1 item ({SelectedGallerySizeFormatted}) to iPhone"
+            : $"📱 Restore {SelectedGalleryCount} items ({SelectedGallerySizeFormatted}) to iPhone";
+    }
+
+    [RelayCommand]
+    public void SelectAllDisplayedGallery()
+    {
+        foreach (var item in DisplayedGalleryItems)
+        {
+            item.IsSelected = true;
+        }
+        UpdateGallerySelectionStats();
+    }
+
+    [RelayCommand]
+    public void DeselectAllGallery()
+    {
+        foreach (var item in GalleryItems.Where(i => i.IsSelected))
+        {
+            item.IsSelected = false;
+        }
+        UpdateGallerySelectionStats();
+    }
+
+    [RelayCommand]
+    public void CancelRestore()
+    {
+        if (IsRestoring && _restoreCts != null)
+        {
+            _restoreCts.Cancel();
+            Log("[RESTORE] User requested cancellation...", LogLevel.Warning, "RESTORE");
+        }
+    }
+
+    [RelayCommand]
+    public async Task RestoreSelectedToIphoneAsync()
+    {
+        if (IsRestoring) return;
+
+        SelectedDevice ??= Devices.FirstOrDefault();
+        if (SelectedDevice == null)
+        {
+            Log("[RESTORE] Cannot restore: No iPhone or Demo Device selected. Please connect an iPhone or select Demo Mode.", LogLevel.Warning, "RESTORE");
+            MessageBox.Show("Please select an iPhone or Demo device from the source dropdown to restore files to.", "No iPhone Selected", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var selected = GalleryItems.Where(i => i.IsSelected).ToList();
+        if (selected.Count == 0)
+        {
+            Log("[RESTORE] No items selected to restore.", LogLevel.Info, "RESTORE");
+            return;
+        }
+
+        // If a real physical iPhone is connected:
+        // Apple restricts direct USB MTP write access to Camera Roll (Error 0x80070032).
+        // Open the iPhone Restore Assistant with direct Wi-Fi AirRestore and Export Sync options!
+        if (SelectedDevice.Id != DeviceService.SimulatedDeviceId)
+        {
+            OpenRestoreModal(selected);
+            return;
+        }
+
+        IsRestoring = true;
+        _restoreCts = new CancellationTokenSource();
+        var ct = _restoreCts.Token;
+        RestoreProgressPercent = 0;
+        RestoreStatusMessage = $"Restoring 0 of {selected.Count} items to {SelectedDevice.Name}...";
+
+        Log($"[RESTORE] Starting restore of {selected.Count} items ({SelectedGallerySizeFormatted}) to {SelectedDevice.Name}...", LogLevel.Info, "RESTORE");
+
+        int restoredCount = 0;
+        long totalBytesToRestore = selected.Sum(i => i.FileSize);
+        long totalBytesUploaded = 0;
+
+        try
+        {
+            for (int i = 0; i < selected.Count; i++)
+            {
+                ct.ThrowIfCancellationRequested();
+                var item = selected[i];
+
+                RestoreStatusMessage = $"Restoring [{i + 1}/{selected.Count}]: {item.FileName}...";
+                Log($"[RESTORE] [{i + 1}/{selected.Count}] Uploading '{item.FileName}' ({item.FileSizeFormatted}) to iPhone...", LogLevel.Info, "RESTORE");
+
+                string targetDir = "DCIM/100APPLE";
+                if (!string.IsNullOrWhiteSpace(item.Folder) && item.Folder.Contains("APPLE", StringComparison.OrdinalIgnoreCase))
+                {
+                    targetDir = $"DCIM/{item.Folder}";
+                }
+
+                long fileBytesUploaded = 0;
+                var byteProgress = new Progress<long>(bytes =>
+                {
+                    long delta = bytes - fileBytesUploaded;
+                    fileBytesUploaded = bytes;
+                    Interlocked.Add(ref totalBytesUploaded, delta);
+                    if (totalBytesToRestore > 0)
+                    {
+                        double pct = Math.Min(100.0, ((double)totalBytesUploaded / totalBytesToRestore) * 100.0);
+                        RestoreProgressPercent = pct;
+                    }
+                });
+
+                // 1. Upload main media file
+                await _deviceService.UploadFileAsync(SelectedDevice.Id, item.FilePath, targetDir, byteProgress, ct);
+
+                // 2. If Apple Live Photo, also upload the companion .MOV video so iOS recognizes it as a Live Photo!
+                if (item.IsLivePhoto && !string.IsNullOrEmpty(item.CompanionVideoPath) && File.Exists(item.CompanionVideoPath))
+                {
+                    Log($"[RESTORE] Uploading companion Live Photo clip '{Path.GetFileName(item.CompanionVideoPath)}'...", LogLevel.Info, "RESTORE");
+                    await _deviceService.UploadFileAsync(SelectedDevice.Id, item.CompanionVideoPath, targetDir, null, ct);
+                }
+
+                restoredCount++;
+                item.IsSelected = false; // Deselect once successfully restored
+            }
+
+            RestoreProgressPercent = 100;
+            RestoreStatusMessage = $"Restore complete: {restoredCount} items restored to {SelectedDevice.Name}!";
+            Log($"[RESTORE] Successfully restored {restoredCount} items to {SelectedDevice.Name}.", LogLevel.Success, "RESTORE");
+
+            // Update iPhone storage metrics
+            try
+            {
+                var (tot, free) = await _deviceService.GetStorageMetricsAsync(SelectedDevice.Id);
+                IPhoneStorage.TotalBytes = tot;
+                IPhoneStorage.FreeBytes = free;
+                Log($"[RESTORE] iPhone storage updated: {IPhoneStorage.FreeFormatted} free of {IPhoneStorage.TotalFormatted}.", LogLevel.Info, "RESTORE");
+            }
+            catch { }
+        }
+        catch (OperationCanceledException)
+        {
+            Log($"[RESTORE] Restore cancelled by user after {restoredCount} items.", LogLevel.Warning, "RESTORE");
+            RestoreStatusMessage = $"Restore cancelled ({restoredCount} items uploaded).";
+        }
+        catch (Exception ex)
+        {
+            Log($"[RESTORE ERROR] {ex.Message}", LogLevel.Error, "RESTORE");
+            RestoreStatusMessage = $"Restore error: {ex.Message}";
+            MessageBox.Show(ex.Message, "Restore Failed", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            IsRestoring = false;
+            UpdateGallerySelectionStats();
+        }
+    }
+
+    [RelayCommand]
+    public async Task RestoreCurrentLightboxItemAsync()
+    {
+        if (SelectedGalleryItem == null) return;
+        SelectedGalleryItem.IsSelected = true;
+        await RestoreSelectedToIphoneAsync();
+    }
+
+    [RelayCommand]
+    public void OpenRestoreModal(List<GalleryItemViewModel>? items = null)
+    {
+        var targetItems = items ?? GalleryItems.Where(i => i.IsSelected).ToList();
+        if (targetItems.Count == 0 && SelectedGalleryItem != null)
+        {
+            targetItems = new List<GalleryItemViewModel> { SelectedGalleryItem };
+        }
+        if (targetItems.Count == 0)
+        {
+            targetItems = DisplayedGalleryItems.Take(1).ToList();
+        }
+        if (targetItems.Count == 0) return;
+
+        try
+        {
+            _wifiRestoreService.Start(targetItems);
+            WifiRestoreUrl = _wifiRestoreService.RestoreUrl;
+            IsWifiRestoreRunning = true;
+            RestoreModalStatusMessage = $"Wi-Fi restore ready! Open {WifiRestoreUrl} on your iPhone.";
+            Log($"[RESTORE] Started Wi-Fi restore server at {WifiRestoreUrl} for {targetItems.Count} items.", LogLevel.Info, "RESTORE");
+        }
+        catch (Exception ex)
+        {
+            RestoreModalStatusMessage = $"Could not start Wi-Fi server: {ex.Message}";
+            Log($"[RESTORE] Wi-Fi server error: {ex.Message}", LogLevel.Warning, "RESTORE");
+        }
+
+        IsRestoreModalOpen = true;
+    }
+
+    [RelayCommand]
+    public void CloseRestoreModal()
+    {
+        IsRestoreModalOpen = false;
+        _wifiRestoreService.Stop();
+        IsWifiRestoreRunning = false;
+        RestoreModalStatusMessage = string.Empty;
+    }
+
+    [RelayCommand]
+    public void CopyWifiRestoreUrl()
+    {
+        if (!string.IsNullOrEmpty(WifiRestoreUrl))
+        {
+            try
+            {
+                Clipboard.SetText(WifiRestoreUrl);
+                RestoreModalStatusMessage = "Link copied to clipboard!";
+            }
+            catch { }
+        }
+    }
+
+    [RelayCommand]
+    public void OpenWifiRestoreInBrowser()
+    {
+        if (!string.IsNullOrEmpty(WifiRestoreUrl))
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = WifiRestoreUrl,
+                    UseShellExecute = true
+                });
+            }
+            catch { }
+        }
+    }
+
+    [RelayCommand]
+    public async Task ExportToSyncFolderAsync()
+    {
+        var selected = GalleryItems.Where(i => i.IsSelected).ToList();
+        if (selected.Count == 0 && SelectedGalleryItem != null)
+        {
+            selected = new List<GalleryItemViewModel> { SelectedGalleryItem };
+        }
+        if (selected.Count == 0) return;
+
+        string targetDir = Path.Combine(DestinationFolder, "iPhone_Restore_Export");
+        Directory.CreateDirectory(targetDir);
+
+        RestoreModalStatusMessage = $"Exporting {selected.Count} items to {targetDir}...";
+        int copied = 0;
+
+        await Task.Run(() =>
+        {
+            foreach (var item in selected)
+            {
+                if (File.Exists(item.FilePath))
+                {
+                    string dest = Path.Combine(targetDir, item.FileName);
+                    File.Copy(item.FilePath, dest, overwrite: true);
+                    copied++;
+                }
+                if (item.IsLivePhoto && !string.IsNullOrEmpty(item.CompanionVideoPath) && File.Exists(item.CompanionVideoPath))
+                {
+                    string movDest = Path.Combine(targetDir, Path.GetFileName(item.CompanionVideoPath));
+                    File.Copy(item.CompanionVideoPath, movDest, overwrite: true);
+                    copied++;
+                }
+            }
+        });
+
+        RestoreModalStatusMessage = $"Exported {copied} files to {targetDir}!";
+        Log($"[RESTORE] Exported {copied} items to sync folder: {targetDir}", LogLevel.Success, "RESTORE");
+
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = targetDir,
+                UseShellExecute = true
+            });
+        }
+        catch { }
+    }
+
     [RelayCommand]
     public async Task OpenGalleryItemAsync(GalleryItemViewModel? item)
     {
@@ -1161,6 +1572,16 @@ public partial class MainViewModel : ObservableObject
         int idx = FilteredGalleryItems.IndexOf(item);
         SelectedGalleryIndex = idx >= 0 ? idx : 0;
         LightboxCounter = $"{SelectedGalleryIndex + 1} of {FilteredGalleryItems.Count}";
+
+        // If thumbnail is not loaded yet, fetch thumbnail first so preview is immediate
+        if (item.Thumbnail == null)
+        {
+            try
+            {
+                item.Thumbnail = await _thumbnailService.GetThumbnailAsync(item.FilePath, targetSize: 280);
+            }
+            catch { }
+        }
 
         if (item.IsVideo)
         {

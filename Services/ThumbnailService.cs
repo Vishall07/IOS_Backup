@@ -118,6 +118,25 @@ public class ThumbnailService : IThumbnailService
         }
     }
 
+    private static BitmapImage? LoadWicThumbnail(string filePath, int targetSize)
+    {
+        try
+        {
+            var bmp = new BitmapImage();
+            bmp.BeginInit();
+            bmp.CacheOption = BitmapCacheOption.OnLoad;
+            bmp.UriSource = new Uri(filePath, UriKind.Absolute);
+            bmp.DecodePixelWidth = targetSize;
+            bmp.EndInit();
+            bmp.Freeze();
+            return bmp;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private BitmapSource? LoadOrGenerateThumbnail(string filePath, int targetSize)
     {
         string ext = Path.GetExtension(filePath).ToLowerInvariant();
@@ -128,17 +147,22 @@ public class ThumbnailService : IThumbnailService
         {
             try
             {
-                var cachedBmp = LoadFrozenBitmapFromFile(diskCacheFile);
-                if (cachedBmp != null) return cachedBmp;
+                var fi = new FileInfo(diskCacheFile);
+                if (fi.Length > 0)
+                {
+                    var cachedBmp = LoadFrozenBitmapFromFile(diskCacheFile);
+                    if (cachedBmp != null) return cachedBmp;
+                }
+                File.Delete(diskCacheFile);
             }
             catch
             {
-                // Corrupted cache file; re-generate
+                // Corrupted cache file; delete and re-generate
                 try { File.Delete(diskCacheFile); } catch { }
             }
         }
 
-        // 2. Videos (.MOV, .MP4)
+        // 2. Videos (.MOV, .MP4, .AVI)
         if (ext is ".mov" or ".mp4" or ".m4v" or ".avi")
         {
             // Check for companion Live Photo still image first
@@ -159,25 +183,51 @@ public class ThumbnailService : IThumbnailService
                 SaveBitmapToDisk(shellBmp, diskCacheFile);
                 return shellBmp;
             }
+
+            // Fallback: try MagickImage frame 0
+            try
+            {
+                using var image = new MagickImage(filePath + "[0]");
+                image.AutoOrient();
+                image.Thumbnail(new MagickGeometry((uint)targetSize, (uint)targetSize) { IgnoreAspectRatio = false });
+                using var ms = new MemoryStream();
+                image.Write(ms, MagickFormat.Jpeg);
+                ms.Position = 0;
+                var bmp = new BitmapImage();
+                bmp.BeginInit();
+                bmp.CacheOption = BitmapCacheOption.OnLoad;
+                bmp.StreamSource = ms;
+                bmp.EndInit();
+                bmp.Freeze();
+                SaveBitmapToDisk(bmp, diskCacheFile);
+                return bmp;
+            }
+            catch { }
+
             return null;
         }
 
-        // 3. Photos (.HEIC, .JPG, .PNG, etc.)
+        // 3. Standard Photos (.JPG, .JPEG, .PNG, .BMP) - Native WIC first
+        if (ext is ".jpg" or ".jpeg" or ".png" or ".bmp")
+        {
+            var wicBmp = LoadWicThumbnail(filePath, targetSize);
+            if (wicBmp != null)
+            {
+                SaveBitmapToDisk(wicBmp, diskCacheFile);
+                return wicBmp;
+            }
+        }
+
+        // 4. Apple HEIC / HEIF / RAW photos (or when WIC failed) - MagickImage
         try
         {
             using var image = new MagickImage(filePath);
             image.AutoOrient();
             image.Thumbnail(new MagickGeometry((uint)targetSize, (uint)targetSize) { IgnoreAspectRatio = false });
 
-            // Save small JPEG to disk cache
-            try
-            {
-                image.Write(diskCacheFile, MagickFormat.Jpeg);
-            }
-            catch { }
-
             using var ms = new MemoryStream();
-            image.Write(ms, MagickFormat.Bmp);
+            image.Quality = 85;
+            image.Write(ms, MagickFormat.Jpeg);
             ms.Position = 0;
 
             var bmp = new BitmapImage();
@@ -186,18 +236,53 @@ public class ThumbnailService : IThumbnailService
             bmp.StreamSource = ms;
             bmp.EndInit();
             bmp.Freeze();
+
+            try { File.WriteAllBytes(diskCacheFile, ms.ToArray()); } catch { }
             return bmp;
         }
-        catch
+        catch { }
+
+        // 5. Shell Thumbnail fallback (uses Windows HEIF / Photos codec if installed)
+        var shellFallback = ExtractShellThumbnail(filePath, targetSize);
+        if (shellFallback != null)
         {
-            return null;
+            SaveBitmapToDisk(shellFallback, diskCacheFile);
+            return shellFallback;
         }
+
+        // 6. Generic WIC fallback
+        var genericWic = LoadWicThumbnail(filePath, targetSize);
+        if (genericWic != null)
+        {
+            SaveBitmapToDisk(genericWic, diskCacheFile);
+            return genericWic;
+        }
+
+        return null;
     }
 
     private BitmapSource? LoadFullResolutionImage(string filePath, int maxWidth, int maxHeight)
     {
         string ext = Path.GetExtension(filePath).ToLowerInvariant();
 
+        // 1. Standard JPG/PNG: use native WIC with DecodePixelWidth
+        if (ext is ".jpg" or ".jpeg" or ".png")
+        {
+            try
+            {
+                var bmp = new BitmapImage();
+                bmp.BeginInit();
+                bmp.CacheOption = BitmapCacheOption.OnLoad;
+                bmp.UriSource = new Uri(filePath, UriKind.Absolute);
+                bmp.DecodePixelWidth = maxWidth;
+                bmp.EndInit();
+                bmp.Freeze();
+                return bmp;
+            }
+            catch { }
+        }
+
+        // 2. MagickImage for HEIC, TIFF, and other formats
         try
         {
             using var image = new MagickImage(filePath);
@@ -208,8 +293,9 @@ public class ThumbnailService : IThumbnailService
                 image.Resize(new MagickGeometry((uint)maxWidth, (uint)maxHeight) { IgnoreAspectRatio = false });
             }
 
+            image.Quality = 90;
             using var ms = new MemoryStream();
-            image.Write(ms, MagickFormat.Bmp);
+            image.Write(ms, MagickFormat.Jpeg); // Writing as JPEG instead of huge uncompressed BMP!
             ms.Position = 0;
 
             var bmp = new BitmapImage();
@@ -220,10 +306,30 @@ public class ThumbnailService : IThumbnailService
             bmp.Freeze();
             return bmp;
         }
-        catch
+        catch { }
+
+        // 3. Windows Shell High-Res Extraction
+        try
         {
-            return null;
+            var shellBmp = ExtractShellThumbnail(filePath, Math.Min(maxWidth, 1920));
+            if (shellBmp != null) return shellBmp;
         }
+        catch { }
+
+        // 4. Generic WIC Fallback
+        try
+        {
+            var bmp = new BitmapImage();
+            bmp.BeginInit();
+            bmp.CacheOption = BitmapCacheOption.OnLoad;
+            bmp.UriSource = new Uri(filePath, UriKind.Absolute);
+            bmp.EndInit();
+            bmp.Freeze();
+            return bmp;
+        }
+        catch { }
+
+        return null;
     }
 
     private BitmapSource? ExtractShellThumbnail(string filePath, int targetSize)
@@ -234,7 +340,14 @@ public class ThumbnailService : IThumbnailService
             int hr = SHCreateItemFromParsingName(filePath, IntPtr.Zero, ref factoryGuid, out object obj);
             if (hr == 0 && obj is IShellItemImageFactory factory)
             {
+                // Try 0x00 (RESIZETOFIT)
                 hr = factory.GetImage(new POINT { X = targetSize, Y = targetSize }, 0x0, out IntPtr hBitmap);
+                // If not successful, try 0x01 (BIGGERSIZEOK)
+                if (hr != 0 || hBitmap == IntPtr.Zero)
+                {
+                    hr = factory.GetImage(new POINT { X = targetSize, Y = targetSize }, 0x01, out hBitmap);
+                }
+
                 if (hr == 0 && hBitmap != IntPtr.Zero)
                 {
                     try
